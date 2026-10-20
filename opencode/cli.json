@@ -9,6 +9,6 @@
     "permissions": "prompt"
   },
   "attention": {
-    "notifications": true
+    "notifications": false
   }
 }

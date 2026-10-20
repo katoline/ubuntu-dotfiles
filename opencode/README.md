@@ -8,8 +8,8 @@ OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.c
 |---|---|
 | [`../ai/opencode.md`](../ai/opencode.md) | OpenCode 固有の差分のみ（共通ルールは [`../ai/core.md`](../ai/core.md)。両者を連結した `~/.config/opencode/AGENTS.md` を `ai/install.sh` が生成する） |
 | [`opencode.json`](opencode.json) | Skillのソース、秘密ファイルの読み取り禁止、Git書き込み・破壊的操作・恒久インストールの確認、`sudo` / force pushの拒否 |
-| [`cli.json`](cli.json) | TUIのダークテーマ、権限確認、OS通知、usage-footerの明示登録 |
-| [`plugins/mobile-notify.js`](plugins/mobile-notify.js) | V2の実行成功時に、既存の`claude-notify`送信機能でiPhoneへ通知 |
+| [`cli.json`](cli.json) | TUIのダークテーマ、権限確認、通知の無効化（`attention.notifications: false`）、usage-footerの明示登録 |
+| [`plugins/mobile-notify.js`](plugins/mobile-notify.js) | 通知の無効化用の互換入口（処理を持たない）。home-manager の既存リンクとプラグイン id を維持するために残す |
 | [`plugins/usage-footer/`](plugins/usage-footer/) | チャット欄下にOpenCode Goの5時間利用率（ローカル履歴からの推定）とセッションコンテキスト使用率を表示 |
 | [`commands/`](commands/) | `/pr`・`/readme`・`/clean-branches`・`/nix-setup`・`/git-pull`・`/code-review` |
 | [`agents/code-review.md`](agents/code-review.md) | 差分を調査する、Kimi K2.7 Code使用の読み取り専用レビューAgent |
@@ -21,14 +21,13 @@ OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.c
 
 - 全プロジェクト共通の指示は `~/.config/opencode/AGENTS.md`。実体は [`ai/core.md`](../ai/README.md)（全CLI共通）＋ `ai/opencode.md`（OpenCode固有の差分）で、`ai/install.sh` が連結生成する（手で編集しない）。**このファイルを消さないこと**：V2 は `AGENTS.md` のみを読み、`CLAUDE.md` へのフォールバックは無いため、消すと共通ルールとOpenCode固有の差分が両方読まれなくなる。`opencode.json` の `instructions` は現在参照を解決しないため代替にならず、将来対応した際の二重読みも避けるため `ai/` を列挙しない（[V2の指示](https://opencode.ai/v2/docs/instructions/)・[V1からの移行](https://opencode.ai/v2/docs/migrate-v1/)）。
 - OpenCodeは `~/.claude/skills/` も互換ソースとして検索するため、`readme`・`clean-branches`・`nix-setup`・`git-pull` Skillsは既存定義を共有する。`pr` は明示した `opencode/skills` ソースから読み、Claude Code版のフック手順と重ならないようOpenCode用のpermission手順を使う。
-- `~/.claude/skills/opencode`・`~/.claude/skills/codex`（Claude CodeからOpenCode・Codexを起動するSkill）は共有しない。OpenCodeが互換ソース経由で読み込んで入れ子起動しないよう、`opencode.json` で `skill` の `opencode`・`codex` を deny している。
+- `~/.claude/skills/opencode`（Claude CodeからOpenCodeを起動するSkill）は共有しない。OpenCodeが互換ソース経由で読み込んで入れ子起動しないよう、`opencode.json` で `skill` の `opencode` を deny している。`codex` の deny は削除済みのClaude用Skillを将来復活させた場合の入れ子起動防止として残す。
 - Claude CodeのHooks、settings.json、モデル振り分けはOpenCodeでは動かない。代替としてOpenCodeのpermissionルールを設定している。
 - `/pr` Command本文の受信、またはユーザー発言先頭の独立した `@pr` を明示起動として扱い、SkillツールでID `pr` を読み込んで子セッションを作らず実行する。通常の `gh pr create`・`gh pr new`・`gh pr edit` は確認する。通常コミット・`origin` へのPR用ブランチprefixのpush・`gh pr create` / `gh pr new` の許可は非表示の専用Agentにだけ設定する。`gh pr edit` はSkillに本文編集手順が無いため専用Agentでも確認を維持する。force push・refspec push等は拒否する。
-- `cli.json` のOS通知に加え、グローバルプラグインが`session.execution.succeeded`（実行成功）時にiPhoneへWeb Push通知する。イベントの`data.sessionID`から親セッションを確認し、Claude/Grokと同じ`~/.claude/claude-notify.json`・送信スクリプト・PWAを使うため、通知設定の追加は不要。
+- OpenCode からは claude-notify の通知を送信しない。`cli.json` の `attention.notifications` を `false` にし、`plugins/mobile-notify.js` は無効化した互換入口として残すだけで、イベント購読・送信プロセス起動を行わない。Claude/Grok と同じ `~/.claude/claude-notify.json`・送信スクリプト・PWA は OpenCode からは使わない（Claude/Grok 側の通知は変更しない）。
 - `plugins/usage-footer/` はTUIの `prompt.footer` にGo 5時間枠の推定値と現在セッションのコンテキスト使用率を表示する。Goの5時間枠はモデル別で、TUI向けの正確なアカウント使用量APIが公開されていないため、Goの標準プラン上限とこのOpenCodeが持つ直近5時間のセッション履歴・コストから推定する。別端末やOpenCode以外のクライアントの使用量、Go Plusの上限は含まれない。履歴を持たないモデルでは `--` を表示する。
 - usage-footerは `cli.json` の `plugins` に `./plugins/usage-footer` と明示登録する。相対パスは `cli.json` のあるディレクトリが基準で、既存のhome-managerリンク先の `tui.ts` から `tui.tsx` を読む。[公式CLIプラグイン仕様](https://opencode.ai/v2/docs/cli/plugins)と実機v2.0.22にはディレクトリの自動探索もあるが、登録を設定に明示する。実機のローダーはローカルの `tui` 入口を解決し、`@opencode/plugin/tui`・`solid-js`・OpenTUIを実行時に共有するため、追加の `package.json` や依存インストールは不要。設定の反映はTUIを起動し直す。読み込み経路は公式仕様とバイナリ内の実装で確認済みだが、表示は未確認（[CLIプラグインの作成](https://opencode.ai/v2/docs/build/plugins/cli/)）。
-- 通知対象は親セッションの正常完了のみ。V2ではバックグラウンドサービスがプラグインを読み込むため、変更後は`opencode service restart`で再読み込みする（実行中セッションは切断される）。
-- 通知が届かない場合は`opencode api get /api/plugin`でプラグイン状態を確認し、`~/.claude/claude-notify.log`で送信側の結果、`~/.local/share/opencode/log/opencode.log`でプラグインの読み込みエラーを確認する。
+- 無効化の反映にはバックグラウンドサービスの再読み込み（`opencode service restart`）が必要で、実行中セッションは切断される。
 - OpenCode V2はプロジェクトの `CLAUDE.md` を読まず、`AGENTS.md` を読む。ルートの `AGENTS.md` はClaude Codeも対応バージョン・設定で直接読めるため、このリポジトリでは `CLAUDE.md` を重複管理しない。
 
 ## インストール・認証
