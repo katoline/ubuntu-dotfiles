@@ -2,17 +2,19 @@ name: Request Dependabot Review
 
 on:
   pull_request_target:
-    types: [opened]
+    types: [opened, reopened, ready_for_review]
 
 permissions:
   pull-requests: write
 
 jobs:
   request-review:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Request review
+      # PR のコードはチェックアウトせず、メタデータだけを使う。
+      - name: Request review from seino914
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
