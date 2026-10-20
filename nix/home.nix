@@ -168,6 +168,10 @@ in
       source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/codex/skills/clean-branches";
       force = true;
     };
+    ".codex/skills/opencode" = {
+      source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/codex/skills/opencode";
+      force = true;
+    };
     # Devin config.json も mergeCliConfigs で実ファイルにして org_id 等を残す。
     # OpenCode のグローバル設定。permission・CLI設定・通知plugin・コマンド・Skillを
     # リポジトリ実体への書き込み可能リンクにして、変更をdotfilesで管理する。

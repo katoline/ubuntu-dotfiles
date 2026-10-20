@@ -63,10 +63,21 @@ home-manager switch --flake ~/Dev/kaishi/ubuntu-dotfiles#ubuntu
 | `/nix-setup` | `$nix-setup` |
 | `/git-pull` | `$git-pull` |
 | `/clean-branches` | `$clean-branches` |
+| `/opencode` | `$opencode` |
 
 Codex CLI 0.162.1は従来の `$CODEX_HOME/skills`（通常は `~/.codex/skills`）をユーザースキルの互換探索先として読む。他CLIも探索する `~/.agents/skills` へCodex専用の入口を配ると、Grok・OpenCode・DevinにもCodex用の指示が混入するため、専用の探索先へ隔離する。[公式実装](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/ext/skills/src/host_roots.rs)
 
 この探索先はdeprecatedとして互換維持されているため、将来Codexの探索仕様が変わる際は配置先を再確認する。
+
+### OpenCodeへの委譲（`$opencode`）
+
+`codex/skills/opencode/SKILL.md` は、Codex から OpenCode へユーザーが明示的に作業を委譲したとき（`$opencode` や「OpenCodeに任せて」）の入口。Codex が要件整理・設計・指示・レビューを担い、OpenCode が実装・調査・検証を担う。オプションなしは今回だけ、`--session-wide` は現在の親会話で以後の実装も委譲、`--once` は解除。継続指定は親会話の状態としてのみ持ち（compact 要約に有効/無効を残す）、設定ファイル・環境変数・フックでは永続化せず、別チャットへ持ち越さない。
+
+実行は Claude Code と共通のランナー `bash ~/.claude/skills/opencode/scripts/run.sh --dir /abs/path/to/project --title 'codex: 作業名'` に heredoc で自己完結した指示を渡す（Codex 専用の実行スクリプトは持たない）。委譲範囲のオプションはスキルが解釈し、ランナーには渡さない（ランナーの `--session` は OpenCode セッション再開用）。既定モデルは `opencode/deepseek-v4.1-flash-free`。利用上限（レート制限・quota）のときだけ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` の順に自動切替し、Go まで上限なら非0で停止する。認証・地域拒否・権限拒否・通信・モデル不存在・context length などは切り替えず停止する。ユーザーが `--model` を明示した場合は自動切替しない。`--auto` は使わない。
+
+Go の利用上限後に従量残高を消費しないため、利用者は Console で Use balance を無効にしておく（Go サブスク枠内に留める前提。設定や認証は読まず変更しない。権限付与ではない）。
+
+Codex の sandbox・承認・フックは OpenCode 内のツールに引き継がれないため、必要な制約は委譲プロンプトに書く。Codex は `git diff` でレビューし、追加の修正は `--session` で再依頼する。Codex 本体のモデル設定は変更しない。配布は `nix/home.nix` の `.codex/skills/opencode` リンクで行い、`home-manager switch`（ユーザーが実行）後に新しいチャットでスキル一覧を再読み込みする。
 
 スキルは `$名前` で明示起動できる。PRは文中の `$pr`（Codex と同じく直前の文字は問わず、直後が英数字・`_` `:` `-` 以外のとき。`$prでPRを作って` も起動し、`$prune` は対象外）、または前後の空白を除いた依頼文の先頭語が `/pr`・旧 `/prompts:pr` の場合だけ起動する。説明文中の `/pr` や自然言語の「PRを出して」では起動しない。旧custom promptは非推奨なので、新しい入口にはスキルを使う。[公式Skills](https://learn.chatgpt.com/docs/build-skills)、[公式Custom Prompts](https://learn.chatgpt.com/docs/custom-prompts)
 

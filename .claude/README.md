@@ -24,11 +24,10 @@
 | `skills/clean-branches/SKILL.md` | `/clean-branches` スキル：ローカルブランチのうちデフォルトブランチ・使用中のブランチ以外を削除して整理（未マージは確認後のみ） |
 | `skills/nix-setup/SKILL.md` | `/nix-setup` スキル：新規プロジェクトの開発環境をNix devShell + direnvでセットアップ |
 | `skills/git-pull/SKILL.md` | `/git-pull` スキル：直下の各リポジトリを `main` に切り替えてfast-forward-onlyでpull（変更があるリポジトリはスキップ） |
-| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ（`scripts/run.sh`、既定モデル `opencode-go/claude-haiku-5-5#medium`、`--auto` は使わない）、結果を要約・レビューする。Claude Code 専用（OpenCode では `opencode.json` で deny） |
-| `skills/codex/SKILL.md` | `/codex` スキル：Claude Code から Codex CLI を `codex exec` で起動して作業を任せ（`scripts/run.sh`、既定 `gpt-6.1-sol` の medium、サンドボックスは workspace-write 固定）、結果を要約・レビューする。Claude Code 専用（OpenCode では `opencode.json` で deny） |
+| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約・レビューする。オプションなしは今回だけ、`--session-wide` は以後の実装も委譲、`--once` は解除（親会話の状態で持ち、永続化しない）。既定モデル `opencode/deepseek-v4.1-flash-free`、利用上限時は `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` の順に自動切替（`--model` 明示時は切替なし、`--auto` は使わない）。Go は Console の Use balance を無効にする前提。Claude Code 専用（OpenCode では `opencode.json` で deny）。Codex は `codex/skills/opencode/SKILL.md` から同じ `scripts/run.sh` を使う |
 | `claude-notify.example.json` | iPhoneプッシュ通知（claude-notify）設定のテンプレート |
 | `setup.sh` | `.claude/` 配下（gitが管理するファイルのみ）を `~/.claude` へシンボリックリンクするスクリプト |
-| `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / validate-claude-config / Grok 互換 / Codex の `codex/hooks/guard.sh`）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
+| `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / validate-claude-config / Grok 互換 / Codex の `codex/hooks/guard.sh`）、OpenCode 委譲ランナーのモデル切替テスト（opencode-run）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
 
 ## セットアップ（反映方法）
 
@@ -157,7 +156,7 @@ bash .claude/tests/run.sh
 
 **Grok CLI でも同じ通知が届く**。notify.sh が `GROK_HOOK_EVENT` で呼び出し元を判別し、応答完了（`reason == "end_turn"` の Stop）と許可待ち（`notificationType == "permission_prompt"` の Notification）だけをタイトル「(Grok)」付きで通知する。
 
-**OpenCode V2 でもタスク完了時に同じ通知が届く**。`opencode/plugins/mobile-notify.js` が`session.execution.succeeded`の`data.sessionID`を使って親セッションの正常完了だけを通知する。Claude/Grokと同じ設定・送信スクリプトを使うため、既に通知を設定済みなら追加作業は不要。プラグインはhome-managerで`~/.config/opencode/plugins/`へリンクされる。
+**OpenCode V2 からは通知を送信しない**。`opencode/cli.json` の `attention.notifications` を `false` にし、`opencode/plugins/mobile-notify.js` は無効化した互換入口として残している（イベント購読・送信プロセス起動を行わない）。Claude/Grok の通知フック・claude-notify 送信機能・設定そのものは変更していない。
 
 新しい PC で使うには（`home-manager switch` 実行後）:
 
