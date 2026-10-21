@@ -7,10 +7,12 @@ description: Codex から OpenCode へ、ユーザーが明示的に求めた作
 
 > **Codex 専用。** OpenCode 自身や Grok では使わない（入れ子起動になる）。Claude 用の `.claude/skills/opencode/SKILL.md` は Claude 専用のガードを含むため全体を読まず、共有ランナーだけを使う。
 
+この Skill の共有ランナーは、委譲時の OpenCode を必ず `delegated-worker` Agent（軽量 worker）で起動する。OpenCode 単体を普通に起動したとき（既定の `build`）とは別物で、単体では対話・Skills・サブ agent・レビュー・PR・worktree の安全な cleanup を通常どおり使う。既存の OpenCode セッションは作成時の Agent を保持するため、単体で通常の体験に戻したいときは Build を選ぶか新しいセッションを開始する。逆に単体 Build の履歴を worker へ流用すると旧ツール定義の情報が残るため、軽量委譲は新規セッションで始め、`--session` は同じ worker タスクの続きに限定する。
+
 ## 役割分担
 
 - **Codex**：要件整理・設計・タスク分解・指示・レビュー・最終判断
-- **OpenCode**：実装・調査・検証・ドキュメント更新など。設計判断は渡さない
+- **OpenCode（`delegated-worker`）**：実装・調査・検証・ドキュメント更新など。設計判断は渡さない
 
 ## 委譲の範囲（親会話の状態）
 
@@ -35,7 +37,7 @@ description: Codex から OpenCode へ、ユーザーが明示的に求めた作
 
 ## 手順
 
-1. Codex が計画を立て、OpenCode 向けの自己完結した指示を書く（OpenCode は会話を知らない）。対象ファイル・方針・制約・完了条件・検証コマンドを含める。Codex の承認・sandbox・フックは OpenCode 内のツールに引き継がれないため、必要なら制約（触れてよい範囲、削除・commit / push / PR 作成の禁止、sudo やグローバルインストールの禁止など）も明記する。最後に添える：
+1. Codex が計画を立て、OpenCode 向けの自己完結した指示を書く（OpenCode は会話を知らない）。対象ファイル・方針・制約・完了条件・検証コマンドを含める。必要な Skill は Codex が自分で読み、委譲指示には関連する制約だけを含める（親の会話全文や全 Skill を子へコピーしない）。Codex の承認・sandbox・フックは OpenCode 内のツールに引き継がれないため、必要なら制約（触れてよい範囲、削除・commit / push / PR 作成の禁止、sudo やグローバルインストールの禁止など）も明記する。最後に添える：
    > 日本語で「変更ファイル／実行した検証と結果／未解決点」の形で簡潔に報告すること。git commit / push / PR 作成・削除・グローバルなインストールはしないこと。
 2. `exec_command` などで実行する。`yield_time_ms` を短めに指定し、返された `session_id` を `write_stdin` で待つ。60秒以上黙らない。Claude 専用の `run_in_background` などの引数は使わない。委譲範囲のオプション（`--session-wide` / `--once`）はこのスキルが解釈し、`run.sh` には渡さない。
 
@@ -52,5 +54,7 @@ description: Codex から OpenCode へ、ユーザーが明示的に求めた作
 ## 注意
 
 - `--auto` は付けない（ask 規則の rm・git commit・git push 等が自動承認される）。
+- 作業用 worktree の作成・変更・削除と安全な cleanup は Codex（親）が行う。`delegated-worker` に許すのは読み取り専用の `git worktree list` だけで、作成・変更・削除は permission で拒否される。単体の OpenCode は共通ルールの worktree 節に従い、保存と同一内容を確認した通常の `git worktree remove <絶対パス>`（`--force` なし）を使える。
+- `--session-wide` はその会話内の委譲範囲を指す指定で、OpenCode の履歴を親と共有する意味ではない。独立タスクは新規セッションで始め、`--session <ID>` は同じタスクの小修正だけに使い、履歴が大きくなったら必要な制約・差分・未完了事項だけを新規セッションへ引き継ぐ。
 - 拒否された操作は別の書き方やツールで迂回しない。必要なら理由を示し、ユーザーに手動実行を依頼する。
 - OpenCode の実行中は、同じファイルを Codex が編集しない。

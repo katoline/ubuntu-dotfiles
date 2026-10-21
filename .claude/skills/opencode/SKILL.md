@@ -11,10 +11,12 @@ allowed-tools:
 
 OpenCode をサブエージェント代わりに使う。目的は Claude のトークン節約なので、手順は軽く回す。通常はユーザーが OpenCode を求めた作業だけで、それ以外は従来どおりサブエージェントへ回す。`--session-wide` の継続指定中は、明示的な呼出しがなくても以後の実装を委譲する。
 
+この Skill の共有ランナーは、委譲時の OpenCode を必ず `delegated-worker` Agent（軽量 worker）で起動する。OpenCode 単体を普通に起動したとき（既定の `build`）とは別物で、単体では対話・Skills・サブ agent・レビュー・PR・worktree の安全な cleanup を通常どおり使う。既存の OpenCode セッションは作成時の Agent を保持するため、単体で通常の体験に戻したいときは Build を選ぶか新しいセッションを開始する。逆に単体 Build の履歴を worker へ流用すると旧ツール定義の情報が残るため、軽量委譲は新規セッションで始め、`--session` は同じ worker タスクの続きに限定する。
+
 ## 役割分担
 
 - **Claude**：要件整理・計画・設計・タスク分解・指示・レビュー・最終判断
-- **OpenCode**：それ以外（実装・テスト作成・調査・ドキュメント更新など）。設計判断は渡さない
+- **OpenCode（`delegated-worker`）**：それ以外（実装・テスト作成・調査・ドキュメント更新など）。設計判断は渡さない
 
 ## 委譲の範囲（親会話の状態）
 
@@ -40,7 +42,7 @@ Go の利用上限後に従量残高を消費しないためには、利用者�
 
 ## 手順
 
-1. Claude が計画を立て、OpenCode 向けの自己完結した指示を書く（OpenCode は会話を知らない）。含めるもの：対象ファイル・方針・制約・完了条件・検証コマンド。最後に次を添える：
+1. Claude が計画を立て、OpenCode 向けの自己完結した指示を書く（OpenCode は会話を知らない）。含めるもの：対象ファイル・方針・制約・完了条件・検証コマンド。必要な Skill は Claude が自分で読み、委譲指示には関連する制約だけを含める（親の会話全文や全 Skill を子へコピーしない）。最後に次を添える：
    > 日本語で「変更ファイル／実行した検証と結果／未解決点」の形で簡潔に報告すること。git commit / push / PR 作成・削除・グローバルなインストールはしないこと。
 2. 実行する。長くなりうるので Bash は `run_in_background: true` を既定にする。委譲範囲のオプション（`--session-wide` / `--once`）はこのスキルが解釈し、`run.sh` には渡さない。
 
@@ -59,5 +61,7 @@ Go の利用上限後に従量残高を消費しないためには、利用者�
 ## 注意
 
 - `--auto` は付けない（ask 規則の rm・git commit・git push 等が自動承認される）。付けなければ ask の操作は自動拒否されるので、必要なら Claude が自分のルールで行う。
+- 作業用 worktree の作成・変更・削除と安全な cleanup は Claude（親）が行う。`delegated-worker` に許すのは読み取り専用の `git worktree list` だけで、作成・変更・削除は permission で拒否される。単体の OpenCode は共通ルールの worktree 節に従い、保存と同一内容を確認した通常の `git worktree remove <絶対パス>`（`--force` なし）を使える。
+- `--session-wide` はその会話内の委譲範囲を指す指定で、OpenCode の履歴を親と共有する意味ではない。独立タスクは新規セッションで始め、`--session <ID>` は同じタスクの小修正だけに使い、履歴が大きくなったら必要な制約・差分・未完了事項だけを新規セッションへ引き継ぐ。
 - Claude Code のフックは OpenCode の中では効かない。OpenCode は `CLAUDE.md` を読まず `AGENTS.md` を読むので、`CLAUDE.md` にしかない制約は指示に書く。
 - OpenCode の実行中は、同じファイルを Claude が編集しない。

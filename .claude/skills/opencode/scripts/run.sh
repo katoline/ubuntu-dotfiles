@@ -135,7 +135,7 @@ for candidate in "${candidates[@]}"; do
 $prompt"
   fi
 
-  args=(run --format json -m "$candidate" --title "$title")
+  args=(run --format json --agent delegated-worker -m "$candidate" --title "$title")
   if [ -n "$resume_session" ]; then
     args+=(--session "$resume_session")
   fi

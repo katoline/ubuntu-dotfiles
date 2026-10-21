@@ -1,6 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "default_agent": "build",
   "skills": ["~/Dev/kaishi/ubuntu-dotfiles/opencode/skills"],
+  "plugins": ["./plugins/shared-harness.js"],
   "permissions": [
     { "action": "skill", "resource": "pr", "effect": "allow" },
     { "action": "skill", "resource": "opencode", "effect": "deny" },
@@ -30,6 +32,10 @@
     { "action": "shell", "resource": "gh pr new *", "effect": "ask" },
     { "action": "shell", "resource": "gh pr edit *", "effect": "ask" },
     { "action": "shell", "resource": "gh pr merge *", "effect": "ask" },
+    { "action": "shell", "resource": "gh * pr create *", "effect": "ask" },
+    { "action": "shell", "resource": "gh * pr new *", "effect": "ask" },
+    { "action": "shell", "resource": "gh * pr edit *", "effect": "ask" },
+    { "action": "shell", "resource": "gh * pr merge *", "effect": "ask" },
     { "action": "shell", "resource": "gh api *", "effect": "ask" },
     { "action": "shell", "resource": "git reset --hard*", "effect": "ask" },
     { "action": "shell", "resource": "git clean *", "effect": "ask" },
@@ -38,7 +44,16 @@
     { "action": "shell", "resource": "git branch -D*", "effect": "ask" },
     { "action": "shell", "resource": "git stash drop*", "effect": "ask" },
     { "action": "shell", "resource": "git stash clear*", "effect": "ask" },
-    { "action": "shell", "resource": "git worktree remove*", "effect": "ask" },
+    { "action": "shell", "resource": "git worktree remove *", "effect": "allow" },
+    { "action": "shell", "resource": "git * worktree remove *", "effect": "allow" },
+    { "action": "shell", "resource": "git worktree remove -f*", "effect": "ask" },
+    { "action": "shell", "resource": "git worktree remove * -f*", "effect": "ask" },
+    { "action": "shell", "resource": "git worktree remove --force*", "effect": "ask" },
+    { "action": "shell", "resource": "git worktree remove *--force*", "effect": "ask" },
+    { "action": "shell", "resource": "git * worktree remove -f*", "effect": "ask" },
+    { "action": "shell", "resource": "git * worktree remove * -f*", "effect": "ask" },
+    { "action": "shell", "resource": "git * worktree remove --force*", "effect": "ask" },
+    { "action": "shell", "resource": "git * worktree remove *--force*", "effect": "ask" },
     { "action": "shell", "resource": "git rebase*", "effect": "ask" },
     { "action": "shell", "resource": "git pull --rebase*", "effect": "ask" },
     { "action": "shell", "resource": "git update-ref -d*", "effect": "ask" },
@@ -85,5 +100,35 @@
     { "action": "shell", "resource": "nix-env *", "effect": "ask" },
     { "action": "shell", "resource": "home-manager switch*", "effect": "ask" },
     { "action": "shell", "resource": "home-manager * switch*", "effect": "ask" }
-  ]
+  ],
+  "agents": {
+    "delegated-worker": {
+      "description": "親セッションから委譲された実装・調査・検証を担当する軽量 worker",
+      "mode": "primary",
+      "hidden": true,
+      "system": "あなたは親セッション（Claude Code / Codex）から委譲された実装・調査・検証担当です。\n- 共通ルールの「サブエージェント」節（メインセッション向け）は適用しない。\n- 要件整理・設計の最終判断・ユーザー対応・Skill の選択・Git の書き込み（commit / push / PR）・worktree の作成と削除は親が行う。\n- 子セッションへ再委譲せず、ユーザーへ直接質問しない。拒否された操作や判断に迷う点は、再試行・別表記・別ツールで回避せず、作業を止めて親へ簡潔に返す。\n- 関連するファイルだけを最小限に探し、長い全文・指示・ログの繰り返し読み込みや貼り付けを避ける。\n- 完了時は「変更ファイル／実行した検証と結果／未解決点」を日本語で短く報告する。",
+      "permissions": [
+        { "action": "skill", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "execute", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "git commit *", "effect": "deny" },
+        { "action": "shell", "resource": "git * commit *", "effect": "deny" },
+        { "action": "shell", "resource": "git push *", "effect": "deny" },
+        { "action": "shell", "resource": "git * push *", "effect": "deny" },
+        { "action": "shell", "resource": "gh pr create *", "effect": "deny" },
+        { "action": "shell", "resource": "gh pr new *", "effect": "deny" },
+        { "action": "shell", "resource": "gh pr edit *", "effect": "deny" },
+        { "action": "shell", "resource": "gh pr merge *", "effect": "deny" },
+        { "action": "shell", "resource": "gh * pr create *", "effect": "deny" },
+        { "action": "shell", "resource": "gh * pr new *", "effect": "deny" },
+        { "action": "shell", "resource": "gh * pr edit *", "effect": "deny" },
+        { "action": "shell", "resource": "gh * pr merge *", "effect": "deny" },
+        { "action": "shell", "resource": "git worktree *", "effect": "deny" },
+        { "action": "shell", "resource": "git * worktree *", "effect": "deny" },
+        { "action": "shell", "resource": "git worktree list *", "effect": "allow" },
+        { "action": "shell", "resource": "git * worktree list *", "effect": "allow" }
+      ]
+    }
+  }
 }

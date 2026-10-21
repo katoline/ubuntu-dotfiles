@@ -12,8 +12,8 @@
 #     Claude Code … ~/.claude/CLAUDE.md（core）と ~/.claude/rules/claude.md（差分）へのリンク。
 #                    編集が即反映される（リンクなので install.sh の再実行は不要）
 #     OpenCode     … ~/.config/opencode/AGENTS.md を連結生成。V2 は AGENTS.md のみを読み、
-#                    CLAUDE.md へのフォールバックは無い。instructions の参照も未対応なので、
-#                    共通ルールと OpenCode 固有の差分はこのファイルから読み込ませる
+#                    CLAUDE.md へのフォールバックは無い。instructions はファイル・glob・URL を
+#                    解決できるが、ai/ を列挙すると AGENTS.md との二重読みになるため使わない
 #     Grok         … ~/.grok/AGENTS.md を連結生成
 #     Codex        … ~/.codex/AGENTS.md を連結生成
 #     Devin        … ~/.config/devin/AGENTS.md を連結生成

@@ -39,6 +39,12 @@ out=$(call "$(pre 'rm -rf /etc/example' require_escalated)"); report A05-hard-de
 out=$(call "$(pre "rm -rf $ROOT/temporary-build")"); report A06-local-delete none "$(decision_of "$out")" "$out"
 out=$(call "$(pre 'git branch -D topic')"); report A07-branch-confirm deny "$(decision_of "$out")" "$out"
 out=$(call "$(pre 'git branch -D topic' require_escalated)"); report A08-branch-escalated-still-deny deny "$(decision_of "$out")" "$out"
+# worktree の通常削除は通り、force は共有ガードの ask を harness が deny に倒す（絶対パス）
+out=$(call "$(pre "git worktree remove $ROOT/temporary-wt")"); report A12-worktree-remove none "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git -C $ROOT worktree remove $ROOT/temporary-wt")"); report A13-worktree-remove-dash-c none "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git worktree remove --force $ROOT/temporary-wt")"); report A14-worktree-force deny "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git worktree remove -f $ROOT/temporary-wt")"); report A15-worktree-short-force deny "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git -C $ROOT worktree remove --force $ROOT/temporary-wt")"); report A16-worktree-dash-c-force deny "$(decision_of "$out")" "$out"
 # CLI 0.162.1 の実ペイロードは command だけで承認情報を含まない。
 out=$(call "$(pre 'git reset --hard' | jq 'del(.tool_input.sandbox_permissions)')")
 report A09-cli-missing-permission deny "$(decision_of "$out")" "$out"
