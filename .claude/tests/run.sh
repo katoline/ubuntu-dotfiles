@@ -5,7 +5,7 @@
 #       hooks/lib/*.awk の構文、SKILL.md / agents の frontmatter、
 #       settings.json のフック・statusLine の登録元検査、
 #       フックと共通指示の配布、ホーム側の CLI 設定マージのテスト
-#       （pr-mode / guard-destructive / verify-gate / validate-claude-config / ai-install / codex-guard / codex-harness / grok-compat / git-pull / cli-config。
+#       （pr-mode / guard-destructive / verify-gate / validate-claude-config / ai-install / codex-guard / codex-harness / grok-compat / git-pull / cli-config / opencode-permissions / opencode-harness。
 #         各テストの summary 行も検査する）
 # 環境変数 HOOKS_DIR を指定すると、別の場所にあるフック（作業コピー）をテストできる
 # CLI 設定マージは python3 に tomlkit が無ければ flake の共通 Python を Nix で取得する（初回は時間がかかる）。
@@ -25,13 +25,19 @@ for j in "$CLAUDE_DIR/settings.json" "$REPO_DIR"/opencode/*.json "$REPO_DIR/code
   if jq empty "$j" 2>/dev/null; then echo "  ✓ ${j#$REPO_DIR/}"; else echo "  ✗ ${j#$REPO_DIR/}: JSON が不正"; status=1; fi
 done
 for f in "$HOOKS_DIR"/*.sh "$HOOKS_DIR"/lib/*.sh "$CLAUDE_DIR/setup.sh" "$CLAUDE_DIR"/skills/*/scripts/*.sh "$TESTS_DIR"/*.sh \
-  "$REPO_DIR/bootstrap.sh" "$REPO_DIR"/ai/*.sh "$REPO_DIR"/codex/hooks/*.sh "$REPO_DIR/opencode/setup.sh" "$HOOKS_DIR"/lib/*.awk; do
+  "$REPO_DIR/bootstrap.sh" "$REPO_DIR"/ai/*.sh "$REPO_DIR"/codex/hooks/*.sh "$REPO_DIR/opencode/hooks/*.sh" "$REPO_DIR/opencode/setup.sh" "$HOOKS_DIR"/lib/*.awk; do
   [ -f "$f" ] || continue
   case "$f" in
     # awk は -f で読み込ませるだけで構文検査になる（/dev/null 入力なので本体は動かない）
     *.awk) if awk -f "$f" /dev/null >/dev/null 2>&1; then echo "  ✓ $(basename "$f")"; else echo "  ✗ $f: 構文エラー"; awk -f "$f" /dev/null >/dev/null; status=1; fi ;;
     *) if bash -n "$f" 2>/dev/null; then echo "  ✓ $(basename "$f")"; else echo "  ✗ $f: 構文エラー"; bash -n "$f"; status=1; fi ;;
   esac
+done
+# OpenCode plugin の JS 構文（V2 は Node/Bun で直接読み込むため、構文だけでも run.sh で検査する）
+for f in "$REPO_DIR"/opencode/plugins/*.js "$TESTS_DIR"/*.mjs; do
+  [ -f "$f" ] || continue
+  if node --check "$f" 2>/dev/null; then echo "  ✓ ${f#$REPO_DIR/}"
+  else echo "  ✗ ${f#$REPO_DIR/}: JS 構文エラー"; node --check "$f"; status=1; fi
 done
 # frontmatter は validate-claude-config.sh と同じ条件で見る（1 行目の --- ／ 閉じ --- ／ name: ／ description:）
 for f in "$CLAUDE_DIR"/skills/*/SKILL.md "$CLAUDE_DIR"/agents/*.md "$REPO_DIR"/codex/skills/*/SKILL.md; do

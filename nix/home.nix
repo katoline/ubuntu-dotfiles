@@ -173,10 +173,11 @@ in
       force = true;
     };
     # Devin config.json も mergeCliConfigs で実ファイルにして org_id 等を残す。
-    # OpenCode のグローバル設定。permission・CLI設定・通知plugin・コマンド・Skillを
+    # OpenCode のグローバル設定。permission・CLI設定・通知plugin・Command・Agent・Skillを
     # リポジトリ実体への書き込み可能リンクにして、変更をdotfilesで管理する。
     # グローバル指示は ai/install.sh が ~/.config/opencode/AGENTS.md を連結生成する。
-    # V2 は CLAUDE.md にフォールバックせず instructions の参照も未対応なので、AGENTS.md を維持する。
+    # V2 は CLAUDE.md にフォールバックせず、instructions に ai/ を列挙すると
+    # AGENTS.md と二重読みになるため、AGENTS.md を維持する。
     ".config/opencode/opencode.json" = {
       source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/opencode/opencode.json";
       force = true;
@@ -187,6 +188,14 @@ in
     };
     ".config/opencode/plugins/mobile-notify.js" = {
       source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/opencode/plugins/mobile-notify.js";
+      force = true;
+    };
+    ".config/opencode/plugins/shared-harness.js" = {
+      source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/opencode/plugins/shared-harness.js";
+      force = true;
+    };
+    ".config/opencode/hooks/harness.sh" = {
+      source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/opencode/hooks/harness.sh";
       force = true;
     };
     ".config/opencode/plugins/usage-footer" = {

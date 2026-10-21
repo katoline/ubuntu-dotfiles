@@ -1,6 +1,11 @@
 # OpenCode 固有の補足
 
-- Claude Code / Grok の Hooks・`settings.json`・モデル振り分けは OpenCode では動かない（`pr-mode.sh`・`guard-destructive.sh` も実行されない）。`opencode.json` の `permissions` と `/pr` Skill の手順に従い、許可ダイアログを迂回しない
+- 通常起動（既定の `build`）では、Claude Code / Codex と同じメイン担当として対話・Skills・サブ agent・質問・レビュー・PR・worktree の安全な cleanup を使う。`delegated-worker` Agent で起動された場合だけ、その Agent の `system` と `permissions` に従う
+- `delegated-worker` は親セッション（Claude Code / Codex）から委譲された実装・調査・検証担当で、Skill の選択・ユーザーへの質問・子への再委譲・Git の書き込み（commit / push / PR）・worktree の変更はできない。拒否された操作や判断に迷う点は、回避せず親へ返す
+- Claude Code / Grok の Hooks・`settings.json`・モデル振り分けは OpenCode では動かない。単体の `build` / `plan` / `pr` では `opencode/plugins/shared-harness.js` が `opencode/hooks/harness.sh` 経由で共通の `guard-destructive.sh`・`pr-mode.sh`・`verify-gate.sh` を V2 plugin API で使う（V1 hooks ではない）。削除 roots・Git 判定・検証分類を OpenCode 側に複写しない。plugin/adapter が読めない・健全性確認に失敗した場合は setup を失敗させ、`opencode.json` の ask を安全網に残す
+- PR 権限は session ごとの単一の同期関数だけが決める。permission 評価の直前に必ず最新の実配送 user を照合し（context hook 単独の成否に依存しない）、実 user が変わったときだけ開始・解除する。session.get / session.context / pr-mode adapter の失敗は古い権限を使わず deny する。synthetic の検証メッセージは実 user とみなさない。worker と通常 subagent の Git 書き込みは agent_id 付きで拒否する
+- 検証促しは V2 に同期 Stop が無いため、TUI の実行成功後に `session.synthetic(resume:true)` で実 user のターンごとに最大 1 回だけ再開する補助。再開済みなら共通 `verify-gate.sh` の pending を消さず、`resume:false` の警告 synthetic を 1 回だけ inbox に残す（会話への即時表示・取り込みは native UI 依存）。次の実 user で改めて 1 回促す。中断・失敗・新しい実 user・他 location・旧 generation・plugin 終了後の旧 job では再開しない。`run` CLI は終了とイベントの race があり保証しない。`delegated-worker` はこの再開の対象外
+- `verify-gate.sh` は検証待ちを編集した worktree ごとに保持し、同じ worktree の直接形（repo root の `bash .claude/tests/run.sh`、`.claude` の `bash tests/run.sh`、絶対パスの `bash <worktree>/.claude/tests/run.sh`、repo root の `nix eval --raw .#…`）の成功だけで解除する。cd・複合コマンド・別 flake の明示は解除しない（pending のまま Stop の説明に従わせる）
 - `/pr` Command 本文を受け取ったこと自体、またはユーザー発言の先頭トークンが `@pr` であること（Markdown のコード表記・引用符で囲まれていても同じ）を明示起動として扱う。UI 上に Command 名が見えるかは条件にしない。再確認・拒否せず `pr` Skill を最後まで実行し、PR の作成・更新か失敗理由を報告する（本文中で言及しただけなら起動扱いにしない）
-- 明示起動が承認するのは、Skill に書かれた通常コミット・`origin` への PR 用ブランチ prefix の push・PR の作成と更新だけ。`gh pr create`・`gh pr new`・`gh pr edit` は通常 ask とし、専用 Agent で明示的に allow した範囲だけ確認なしで実行する
+- 明示起動が承認するのは、Skill に書かれた通常コミット・`origin` への PR 用ブランチ prefix の push・PR の作成と更新だけ。`gh pr create`・`gh pr new`・`gh pr edit` は通常 ask とし、`/pr` 中は共通 `pr-mode.sh` の PermissionRequest 条件を満たすものだけを plugin が allow に反映する（専用 Agent に固定 allow は置かない）。plugin を読み込めない場合は ask のまま確認を待つ。この起動条件と許可範囲は通常起動用で、`delegated-worker` には適用しない
 - OpenCode の認証情報は読まない・リポジトリに保存しない

@@ -71,7 +71,7 @@ Codex CLI 0.162.1は従来の `$CODEX_HOME/skills`（通常は `~/.codex/skills`
 
 ### OpenCodeへの委譲（`$opencode`）
 
-`codex/skills/opencode/SKILL.md` は、Codex から OpenCode へユーザーが明示的に作業を委譲したとき（`$opencode` や「OpenCodeに任せて」）の入口。Codex が要件整理・設計・指示・レビューを担い、OpenCode が実装・調査・検証を担う。オプションなしは今回だけ、`--session-wide` は現在の親会話で以後の実装も委譲、`--once` は解除。継続指定は親会話の状態としてのみ持ち（compact 要約に有効/無効を残す）、設定ファイル・環境変数・フックでは永続化せず、別チャットへ持ち越さない。
+`codex/skills/opencode/SKILL.md` は、Codex から OpenCode へユーザーが明示的に作業を委譲したとき（`$opencode` や「OpenCodeに任せて」）の入口。Codex が要件整理・設計・指示・レビューを担い、OpenCode が実装・調査・検証を担う。ランナーは自動で `delegated-worker` Agent を使い、単体の OpenCode（既定 build）とは分離する。worker は commit / push / PR・worktree 変更・ユーザーへの質問・子への再委譲をしない。オプションなしは今回だけ、`--session-wide` は現在の親会話で以後の実装も委譲、`--once` は解除。継続指定は親会話の状態としてのみ持ち（compact 要約に有効/無効を残す）、設定ファイル・環境変数・フックでは永続化せず、別チャットへ持ち越さない。
 
 実行は Claude Code と共通のランナー `bash ~/.claude/skills/opencode/scripts/run.sh --dir /abs/path/to/project --title 'codex: 作業名'` に heredoc で自己完結した指示を渡す（Codex 専用の実行スクリプトは持たない）。委譲範囲のオプションはスキルが解釈し、ランナーには渡さない（ランナーの `--session` は OpenCode セッション再開用）。既定モデルは `opencode/deepseek-v4.1-flash-free`。利用上限（レート制限・quota）のときだけ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` の順に自動切替し、Go まで上限なら非0で停止する。認証・地域拒否・権限拒否・通信・モデル不存在・context length などは切り替えず停止する。ユーザーが `--model` を明示した場合は自動切替しない。`--auto` は使わない。
 

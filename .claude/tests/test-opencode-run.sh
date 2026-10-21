@@ -20,9 +20,11 @@ if [ "${1:-}" = "session" ]; then
 fi
 model=""
 session=""
+agent=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --format|--title) shift 2 ;;
+    --agent) agent="${2-}"; shift 2 ;;
     -m|--model) model="${2-}"; shift 2 ;;
     --session|-s) session="${2-}"; shift 2 ;;
     --) shift; break ;;
@@ -32,6 +34,7 @@ done
 prompt="${1-}"
 printf '%s\n' "$model" >> "$state/models"
 printf '%s\n' "$session" >> "$state/sessions"
+printf '%s\n' "$agent" >> "$state/agents"
 printf '%s\n' "$prompt" >> "$state/prompts"
 n=$(wc -l < "$state/models" | tr -d ' ')
 sid="ses_stub_$n"
@@ -83,6 +86,8 @@ RC=0
 has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 line_at() { sed -n "${1}p" "$2"; }
 count_lines() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
+agent_at() { sed -n "${1}p" "$STATE/agents"; }
+agents_unique() { sort -u "$STATE/agents" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'; }
 envs() { ENVS=("$@"); }
 run_runner() { # name [run.sh の引数...]
   local name="$1"; shift
@@ -107,6 +112,7 @@ run_runner A01-default-success
 report A01-rc 0 "$RC" "$(cat "$ERR")"
 report A01-one-model 1 "$(count_lines "$STATE/models")" "$(cat "$STATE/models" 2>/dev/null)"
 report A01-model "$DEFAULT" "$(line_at 1 "$STATE/models")" ""
+report A01-agent delegated-worker "$(agent_at 1)" "全 run 呼出しに専用 agent を渡す"
 report A01-output yes "$(has "$(cat "$OUT")" "- モデル: $DEFAULT")" ""
 
 envs "STUB_LIMIT_MODELS=$DEFAULT"
@@ -116,6 +122,7 @@ report A02-two-models 2 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")
 report A02-second-model "$GLM" "$(line_at 2 "$STATE/models")" ""
 report A02-switch-note yes "$(has "$(cat "$OUT")" '利用上限のため次のモデルへ切替')" ""
 report A02-final-model yes "$(has "$(cat "$OUT")" "- モデル: $GLM")" ""
+report A02-all-agents delegated-worker "$(agents_unique)" "切替後の試行にも同じ agent を渡す"
 
 envs "STUB_LIMIT_MODELS=$DEFAULT $GLM"
 run_runner A03-limit-to-go
@@ -123,6 +130,7 @@ report A03-rc 0 "$RC" "$(cat "$ERR")"
 report A03-three-models 3 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
 report A03-third-model "$GO" "$(line_at 3 "$STATE/models")" ""
 report A03-final-model yes "$(has "$(cat "$OUT")" "- モデル: $GO")" ""
+report A03-all-agents delegated-worker "$(agents_unique)" ""
 
 envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO"
 run_runner A04-all-limit
@@ -175,6 +183,7 @@ report D01-rc 0 "$RC" "$(cat "$ERR")"
 report D01-second-session ses_stub_1 "$(line_at 2 "$STATE/sessions")" ""
 report D01-continue-prompt yes "$(has "$(cat "$STATE/prompts")" '未完了の作業から再開')" ""
 report D01-original-prompt 2 "$(grep -c "^$INPUT_PROMPT$" "$STATE/prompts")" "継続プロンプトにも元の指示を含める"
+report D01-all-agents delegated-worker "$(agents_unique)" "セッション再開時の試行にも同じ agent を渡す"
 report D01-attempt-logs 2 "$(attempt_logs)" ""
 report D01-attempt-errlogs 2 "$(attempt_errlogs)" ""
 
@@ -189,6 +198,7 @@ envs "STUB_LIMIT_MODELS=$DEFAULT"
 run_runner D03-user-session --session ses_user
 report D03-rc 0 "$RC" "$(cat "$ERR")"
 report D03-keeps-user-session ses_user "$(line_at 2 "$STATE/sessions")" ""
+report D03-all-agents delegated-worker "$(agents_unique)" "利用者が --session を指定した再開でも同じ agent"
 
 envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO" "STUB_NO_SESSION_MODELS=$DEFAULT $GLM $GO"
 run_runner D04-all-limit-no-session

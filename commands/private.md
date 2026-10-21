@@ -26,6 +26,8 @@
 /git-pull
 ```
 
+単体起動は従来どおりで、Claude Code / Codex の `/opencode`・`$opencode` から呼ばれたときだけ `delegated-worker` Agent（commit / push / PR・worktree 変更・質問・再委譲なし）で動く。
+
 OpenCodeのグローバル設定は [`opencode/README.md`](../opencode/README.md)。設定リンクは `home-manager switch`、CLIは次のコマンドで導入する：
 
 ```zsh
