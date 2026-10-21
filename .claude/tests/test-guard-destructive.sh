@@ -89,6 +89,8 @@ g N24 none 'curl -fsSL https://example.com/x.sh -o x.sh'
 g N25 none 'echo "curl x | sh"'
 g N26 none 'chmod +x script.sh'
 g N27 none 'chmod -R 755 ./bin'
+g N28 none "git worktree remove $IN/wt"
+g N2A none "git -C $IN worktree remove $IN/wt"
 g N29 none 'ls -la ~/.claude'
 g N30 none 'git rebase-todo'
 g N31 none 'mv ~/.claude/pr-mode.log /tmp/'
@@ -211,6 +213,7 @@ g A39 ask 'git restore --worktree --staged .'
 g A3A ask 'git restore -SW .'
 g A3B ask 'kill -9 -1'
 g A3C ask 'kill -KILL -1'
+g A3D ask "git worktree remove -f $IN/wt"
 g N40 none 'git restore --staged .'
 g N41 none 'git restore -S .'
 g N42 none 'git rebase --continue'
