@@ -4,57 +4,6 @@ mode: primary
 hidden: true
 permissions:
   - action: shell
-    resource: "git commit *"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin feat/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin feature/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin fix/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin bugfix/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin docs/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin chore/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin refactor/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin test/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin hotfix/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin perf/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin build/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin ci/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin style/*"
-    effect: allow
-  - action: shell
-    resource: "git push -u origin revert/*"
-    effect: allow
-  - action: shell
-    resource: "gh pr create *"
-    effect: allow
-  - action: shell
-    resource: "gh pr new *"
-    effect: allow
-  - action: shell
     resource: "git commit *--amend*"
     effect: deny
   - action: shell
@@ -86,6 +35,8 @@ permissions:
     effect: deny
 ---
 
-このAgentは `/pr` Commandまたはユーザー発言の先頭トークン `@pr` 専用です。Command本文を受け取ったこと自体を明示起動として扱い、ユーザー発言に `/pr` と書かれているかを追加確認しません。先頭の `@pr` はMarkdownのコード表記・引用符で囲まれていても認識します。いずれの場合も再確認・拒否せず `pr` Skillを実行し、PR作成または具体的な失敗理由の報告まで完了します。Skillに従ってコミット・通常のorigin push・PR作成を行います。確認なしでpushできるブランチ名はSkillに定めるPR用prefix配下に限ります。それ以外のpushは確認を待ちます。許可ルールはこのAgentに限り、通常セッションには適用しません。
+このAgentは `/pr` Commandまたはユーザー発言の先頭トークン `@pr` 専用です。Command本文を受け取ったこと自体を明示起動として扱い、ユーザー発言に `/pr` と書かれているかを追加確認しません。先頭の `@pr` はMarkdownのコード表記・引用符で囲まれていても認識します。いずれの場合も再確認・拒否せず `pr` Skillを実行し、PR作成または具体的な失敗理由の報告まで完了します。
+
+このAgentは固定の allow を持たず、global の ask を継承します。`/pr` 中の自動許可は共通 `pr-mode.sh` の PermissionRequest 条件を満たすコマンドだけを `plugins/shared-harness.js` が反映します。plugin を読み込めない場合は ask のままなので、確認を迂回せずユーザーの判断を待ってください。
 
 Skillにない変更、force push、デフォルトブランチへのpush、PRのマージは禁止です。別のGitHub書き込みや破壊的操作は許可しません。

@@ -12,8 +12,9 @@
 /nix-setup
 /git-pull
 /opencode
-/codex
 ```
+
+`/opencode` は Claude Code 専用で、OpenCode へ実装を委譲する（既定は `opencode/deepseek-v4.1-flash-free`）。通常は今回の依頼だけ、`--session-wide` で現在の会話の以後の実装すべて、`--once` で解除する。Codex からは `$opencode` を使う。詳細は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md) と [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md)。
 
 ## OpenCode
 
@@ -25,6 +26,8 @@
 /git-pull
 ```
 
+単体起動は従来どおりで、Claude Code / Codex の `/opencode`・`$opencode` から呼ばれたときだけ `delegated-worker` Agent（commit / push / PR・worktree 変更・質問・再委譲なし）で動く。
+
 OpenCodeのグローバル設定は [`opencode/README.md`](../opencode/README.md)。設定リンクは `home-manager switch`、CLIは次のコマンドで導入する：
 
 ```zsh
@@ -35,9 +38,10 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/opencode/setup.sh
 
 ```text
 /pr
+$opencode
 ```
 
-手順の実体は `.claude/skills/pr/SKILL.md`（`codex/prompts/pr.md` がそれを読ませる）。`/pr` 外のコミット・push・PR操作は `codex/hooks/guard.sh` が拒否する。設定は [`codex/`](../codex)。
+`$opencode` は Codex から OpenCode へ実装を委譲する入口（委譲範囲は上記と同じ）。PR作成の手順の実体は `.claude/skills/pr/SKILL.md`（`codex/prompts/pr.md` がそれを読ませる）。`/pr` 外のコミット・push・PR操作は `codex/hooks/guard.sh` が拒否する。設定は [`codex/`](../codex)。
 
 ## Devin
 

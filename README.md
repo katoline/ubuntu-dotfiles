@@ -13,10 +13,10 @@ Ubuntu環境全体をNix（home-manager standalone）で宣言的に管理する
 - 全CLI共通のグローバル指示（`ai/core.md` ＋ CLI別差分。`ai/install.sh` が Claude Code へはリンク、OpenCode / Grok / Codex / Devin へは連結生成で配る。詳細は`ai/README.md`）
 - Claude Code（`settings.json` / Skills / Agents / Hooksによるグローバル設定管理）
 - Grok CLI（xAI。`grok/config.toml`をhome-manager経由で書き込み可能リンク。グローバル指示は`ai/`から連結生成。本体は`bootstrap.sh`が公式インストーラーで導入）
-- OpenCode（`opencode/`のSkills / Commands / permissions / CLI設定をhome-manager経由でリンク。本体は公式インストーラーで導入）
+- OpenCode（`opencode/`のSkills / Commands / permissions / CLI設定をhome-manager経由でリンク。単体でも普通に使え、Claude Code / Codexの親セッションから呼ばれたときだけ `delegated-worker` Agentで軽量に動く。本体は公式インストーラーで導入）
 - Codex CLI（OpenAI。home-managerが`codex/config.toml`・`hooks.json`の宣言値をホーム側の実ファイルへマージし、フックスクリプト・スキル・旧プロンプトはリンクする。共通スキルの入口は[codex/README.md](/codex/README.md)を参照。本体は`bootstrap.sh`が公式インストーラーで導入。反映とUbuntuのサンドボックス対策は`codex/README.md`）
 - Devin CLI（Cognition。home-managerが`devin/config.json`の宣言値をホーム側の実ファイルへマージし、`org_id`等のローカル状態を保持する。本体は`bootstrap.sh`が公式インストーラーで導入）
-- Web Push通知（dotfiles内蔵の送信スクリプト`claude-notify/send-push.mjs`が、Claude/GrokのStop・NotificationとOpenCode V2の実行成功時にiPhoneへプッシュ通知。受信側PWAは別リポジトリ`claude-notify-mobile`をVercelで配信。Node.js + `web-push` + `jq`）
+- Web Push通知（dotfiles内蔵の送信スクリプト`claude-notify/send-push.mjs`が、Claude/GrokのStop・Notification時にiPhoneへプッシュ通知。OpenCodeからは送らない。受信側PWAは別リポジトリ`claude-notify-mobile`をVercelで配信。Node.js + `web-push` + `jq`）
 - GitHub Actions（`.github/workflows/`配下で共通ワークフローを管理し、他リポジトリへ配布）
 - GitHub CLI（`gh`、`/pr`スキル内でPR作成に使用）
 
@@ -60,12 +60,12 @@ dotfiles/
 ├── devin/
 │   └── config.json        # Devin CLIの設定（permissions・他ツールのルール読み込みの可否）
 ├── opencode/
-│   ├── README.md          # OpenCode設定とClaude/Grokとの共有範囲
-│   ├── opencode.json      # Skillのソースと権限設定（秘密情報・Git・破壊的操作等）
+│   ├── README.md          # OpenCode設定とClaude Code / Codexからの委譲範囲
+│   ├── opencode.json      # 権限設定（既定build・delegated-worker・Git/PR/worktree等）
 │   ├── cli.json           # TUI設定（ダークテーマ・権限確認・OS通知）
-│   ├── plugins/mobile-notify.js # タスク成功時にiPhoneへWeb Push通知
-│   ├── agents/            # /code-review が起動するread-onlyレビューAgent
+│   ├── plugins/mobile-notify.js # 通知を無効化した互換入口（home-managerリンク維持）
 │   ├── commands/          # /pr・/readme・/clean-branches・/nix-setup・/git-pull・/code-review
+│   ├── agents/            # /pr 専用Agentとread-onlyレビューAgent
 │   ├── skills/pr/SKILL.md # OpenCode用のPR作成手順
 │   └── setup.sh           # OpenCode公式インストーラー
 ├── vscode/
@@ -92,7 +92,7 @@ dotfiles/
 ├── tmux/
 │   ├── README.md         # SSH切断後もセッションを残す説明
 │   └── .tmux.conf        # 256色・履歴（home.nix が ~/.tmux.conf へリンク）
-├── claude-notify/         # iPhoneプッシュ通知の送信スクリプト（Claude/Grokフック・OpenCode pluginから呼ばれる）
+├── claude-notify/         # iPhoneプッシュ通知の送信スクリプト（Claude/Grokフックから呼ばれる）
 │   ├── README.md
 │   ├── send-push.mjs     # Web Push送信本体（VAPID署名。設定は ~/.claude/claude-notify.json）
 │   ├── package.json      # web-push と開発用の Biome
@@ -120,8 +120,7 @@ dotfiles/
     │   ├── clean-branches/SKILL.md # /clean-branches スキル
     │   ├── nix-setup/SKILL.md     # /nix-setup スキル
     │   ├── git-pull/              # /git-pull スキルと共有スクリプト
-    │   ├── opencode/              # /opencode スキル（Claude CodeからOpenCodeを非対話で起動。Claude Code専用）
-    │   └── codex/                 # /codex スキル（Claude CodeからCodexを非対話で起動。Claude Code専用）
+    │   └── opencode/              # /opencode（Claude Code）/ $opencode（Codex）からOpenCodeへ実装を委譲
     ├── tests/             # フックのテーブル駆動テスト（run.shで一括実行。~/.claude へは配布しない）
     └── README.md
 ```
@@ -178,13 +177,12 @@ nix flake update
 ```
 
 ### AIエージェント用コマンド・スキル
-- `/pr`：Claude Code / Grokでは明示的な `/pr` 起動、OpenCodeでは `/pr` Commandまたは発言先頭の `@pr` で、変更をコミットしブランチをpushしてGitHubへPull Requestを作成する（通常の「PRを出して」だけでは起動しない）
+- `/pr`：Claude Code / Grok / Codex / OpenCode単体では明示的な `/pr` 起動（OpenCodeは発言先頭の `@pr` も）で、変更をコミットしブランチをpushしてGitHubへPull Requestを作成する（通常の「PRを出して」だけでは起動しない。親から委譲された `delegated-worker` は commit / push / PR を行わない）
 - `/readme`：READMEをコードベースの現状に合わせて更新（なければ新規作成）する
 - `/clean-branches`：ローカルブランチのうちmain・develop以外を削除して整理する
 - `/nix-setup`：新規プロジェクトの開発環境をNixのdevShell + direnvでセットアップする
 - `/git-pull`：ワークスペース直下のリポジトリをmainに切り替えてfast-forward-onlyでpullする（変更中や分岐したリポジトリは保全）
-- `/opencode`：Claude Code専用。Claude CodeからOpenCodeを非対話で起動して作業を任せ（既定は `opencode-go/claude-haiku-5-5#medium`、`--auto` は使わない）、結果をClaudeがレビューする。ユーザーがOpenCodeを明示的に求めたときだけ使う
-- `/codex`：Claude Code専用。Claude CodeからCodex CLIを `codex exec` で起動して作業を任せ（既定は `gpt-6.1-sol` の medium、サンドボックスは workspace-write）、結果をClaudeがレビューする。ユーザーがCodexを明示的に求めたときだけ使う
+- `/opencode` / `$opencode`：Claude Codeの `/opencode`、Codexの `$opencode` からOpenCodeを非対話で起動して実装を任せ、結果を親CLIがレビューする。新しいランナーは自動で `delegated-worker` Agentを使い、commit / push / PR・worktree変更・ユーザーへの質問・子への再委譲を行わない（OpenCode単体は build のままで通常どおり使える）。既定は `opencode/deepseek-v4.1-flash-free` で、利用上限時のみ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` へ切り替える。通常は今回の依頼だけ、`--session-wide` は現在の会話の以後の実装すべて、`--once` は解除。詳細は [Claude用](/.claude/skills/opencode/SKILL.md)・[Codex用](/codex/skills/opencode/SKILL.md)
 
 ### セットアップスクリプト
 - `bash .claude/setup.sh`：`.claude/`配下（gitが管理するファイルのみ）を`~/.claude`へシンボリックリンク

@@ -38,14 +38,15 @@ edit() { # session tool path
   jq -cn --arg s "$1" --arg t "$2" --arg k "$key" --arg f "$3" \
     '{hook_event_name:"PostToolUse",session_id:$s,tool_name:$t,tool_input:{($k):$f},tool_response:{}}' | hook
 }
-bashrun() { # session command stdout
-  jq -cn --arg s "$1" --arg c "$2" --arg o "$3" \
-    '{hook_event_name:"PostToolUse",session_id:$s,tool_name:"Bash",tool_input:{command:$c},tool_response:{stdout:$o,stderr:"",interrupted:false,isImage:false}}' | hook
+bashrun() { # session command stdout [cwd]
+  jq -cn --arg s "$1" --arg c "$2" --arg o "$3" --arg d "${4:-}" \
+    '{hook_event_name:"PostToolUse",session_id:$s,tool_name:"Bash",tool_input:{command:$c},tool_response:{stdout:$o,stderr:"",interrupted:false,isImage:false},cwd:$d}' | hook
 }
 stop() { # session stop_hook_active(true/false)
   jq -cn --arg s "$1" --argjson a "$2" '{hook_event_name:"Stop",session_id:$s,stop_hook_active:$a,last_assistant_message:"done"}' | hook
 }
-state_of() { if [ -f "$ST/claude-verify-gate-$1" ]; then paste -sd, - < "$ST/claude-verify-gate-$1"; else echo none; fi; }
+state_of() { if [ -f "$ST/claude-verify-gate-$1" ]; then cut -f1 "$ST/claude-verify-gate-$1" | paste -sd, -; else echo none; fi; }
+state_full() { if [ -f "$ST/claude-verify-gate-$1" ]; then paste -sd, - < "$ST/claude-verify-gate-$1"; else echo none; fi; }
 jget() { if [ -z "$1" ]; then echo empty; else printf '%s' "$1" | jq -r "$2"; fi; }
 has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 
@@ -79,6 +80,33 @@ bashrun "$S1" "bash $ROOT/.claude/tests/run.sh 2>&1 | tail -3" "$RUN_OK" >/dev/n
 report A15-cleared none "$(state_of "$S1")" ""
 out=$(stop "$S1" false); report A16-stop-silent "" "$out" "$out"
 out=$(stop "$S1" true);  report A17-stop-silent-active "" "$out" "$out"
+edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+bashrun "$S1" 'bash tests/run.sh 2>&1 | tail -3' "$RUN_OK" "$ROOT/.claude" >/dev/null
+report A18-relative-cwd-cleared none "$(state_of "$S1")" "cwd がこの dotfiles の .claude なら相対実行でも解除する"
+edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+bashrun "$S1" 'bash tests/run.sh 2>&1 | tail -3' "$RUN_OK" "$W/outside" >/dev/null
+report A19-relative-other-cwd run.sh "$(state_of "$S1")" "無関係な cwd の同名 tests/run.sh の成功では解除しない"
+edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+bashrun "$S1" 'bash tests/run.sh 2>&1 | tail -3' "$RUN_OK" "$ROOT" >/dev/null
+report A20-relative-repo-root run.sh "$(state_of "$S1")" "リポジトリ直下の cwd でも相対形は解除しない（.claude のみ）"
+bashrun "$S1" 'bash tests/run.sh' "$RUN_OK" >/dev/null
+report A21-relative-no-cwd run.sh "$(state_of "$S1")" "cwd が無ければ相対形では解除しない"
+bashrun "$S1" 'bash .claude/tests/run.sh' "$RUN_OK" >/dev/null
+report A22-relative-nocwd-kept run.sh "$(state_of "$S1")" "cwd が無い相対 .claude/tests/run.sh は検証先を特定できないので解除しない"
+bashrun "$S1" 'bash .claude/tests/run.sh' "$RUN_OK" "$ROOT" >/dev/null
+report A22b-relative-root-cleared none "$(state_of "$S1")" "checkout 直下の cwd なら相対 .claude/tests/run.sh で解除する"
+edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+bashrun "$S1" "cd $W/outside && bash tests/run.sh" "$RUN_OK" "$ROOT/.claude" >/dev/null
+report A23-relative-cd-other run.sh "$(state_of "$S1")" "cwd=.claude でも cd で別ディレクトリへ移る相対形は解除しない"
+edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+bashrun "$S1" 'bash tests/run.sh; echo ok' "$RUN_OK" "$ROOT/.claude" >/dev/null
+report A24-relative-compound run.sh "$(state_of "$S1")" "相対形に複合コマンドを足した形は解除しない"
+edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+bashrun "$S1" 'bash tests/run.sh 2>&1 | grep すべて' "$RUN_OK" "$ROOT/.claude" >/dev/null
+report A25-relative-other-pipe run.sh "$(state_of "$S1")" "許容する tail 以外へのパイプは解除しない"
+bashrun "$S1" 'bash tests/run.sh 2>&1 | tail -n 3' "$RUN_OK" "$ROOT/.claude" >/dev/null
+report A26-relative-tail-n none "$(state_of "$S1")" "tail -n N 形は許容する"
+rm -f "$ST/claude-verify-gate-$S1"
 
 echo "# B. stop_hook_active が true なら止めずに systemMessage で警告し、記録を消す"
 edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
@@ -92,7 +120,7 @@ out=$(stop "$S1" false); report B05-next-turn-silent "" "$out" "$out"
 edit "$S1" Edit "$W/repo/flake.nix" >/dev/null
 report B06-reedit-records "nix eval" "$(state_of "$S1")" "新たに編集すれば再び促す"
 out=$(stop "$S1" false); report B07-reprompt block "$(jget "$out" '.decision // "none"')" "$out"
-bashrun "$S1" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" >/dev/null
+bashrun "$S1" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" "$ROOT" >/dev/null
 report B08-cleared none "$(state_of "$S1")" ""
 
 echo "# C. nix eval カテゴリと両方のカテゴリ"
@@ -101,22 +129,22 @@ edit "$S2" Edit "$W/repo/flake.nix" >/dev/null
 report C01-nix-dedup "nix eval" "$(state_of "$S2")" ""
 reason=$(jget "$(stop "$S2" false)" '.reason // ""')
 report C02-reason "yes,no" "$(has "$reason" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath'),$(has "$reason" 'bash .claude/tests/run.sh')" "$reason"
-bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' 'error: attribute missing' >/dev/null
+bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' 'error: attribute missing' "$ROOT" >/dev/null
 report C03-no-drv "nix eval" "$(state_of "$S2")" ""
 bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2>&1 | tail -3' \
-  $'error: builder for \'/nix/store/abcd1234-home-manager-generation.drv\' failed with exit code 1' >/dev/null
+  $'error: builder for \'/nix/store/abcd1234-home-manager-generation.drv\' failed with exit code 1' "$ROOT" >/dev/null
 report C04-drv-in-error "nix eval" "$(state_of "$S2")" "行の途中の …drv では解除しない"
-bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2>&1' $'warning: Git tree \'/x\' is dirty\n'"$NIX_OK" >/dev/null
+bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2>&1' $'warning: Git tree \'/x\' is dirty\n'"$NIX_OK" "$ROOT" >/dev/null
 report C05-cleared-with-warning none "$(state_of "$S2")" "2>&1 で警告が混ざっても drvPath の行があれば解除"
 edit "$S2" Edit "$W/repo/.claude/dev-roots" >/dev/null
 report C06-dev-roots-both "run.sh,nix eval" "$(state_of "$S2")" "dev-roots は run.sh と nix eval の両方"
 reason=$(jget "$(stop "$S2" false)" '.reason // ""')
 report C07-both-reason "yes,yes" "$(has "$reason" 'bash .claude/tests/run.sh'),$(has "$reason" 'nix eval --raw')" "$reason"
-bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2>&1 | tail -1' "$NIX_OK" >/dev/null
+bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2>&1 | tail -1' "$NIX_OK" "$ROOT" >/dev/null
 report C08-one-left run.sh "$(state_of "$S2")" ""
 reason=$(jget "$(stop "$S2" false)" '.reason // ""')
 report C09-left-reason "yes,no" "$(has "$reason" 'bash .claude/tests/run.sh'),$(has "$reason" 'nix eval --raw')" "$reason"
-bashrun "$S2" 'bash .claude/tests/run.sh' "$RUN_OK" >/dev/null
+bashrun "$S2" 'bash .claude/tests/run.sh' "$RUN_OK" "$ROOT" >/dev/null
 report C10-all-cleared none "$(state_of "$S2")" ""
 len=$(jget "$(edit "$S2" Edit "$W/repo/.claude/dev-roots" >/dev/null; stop "$S2" false)" '.reason // "" | length')
 if [ "$len" != empty ] && [ "$len" -gt 0 ] && [ "$len" -le 10000 ]; then ok=yes; else ok=no; fi
@@ -126,10 +154,18 @@ edit "$S2" Edit "$W/repo/nix/merge-cli-config.py" >/dev/null
 report C12-merge-cli-config-both "run.sh,nix eval" "$(state_of "$S2")" "マージスクリプトも run.sh と nix eval の両方"
 reason=$(jget "$(stop "$S2" false)" '.reason // ""')
 report C13-merge-cli-config-reason "yes,yes" "$(has "$reason" 'bash .claude/tests/run.sh'),$(has "$reason" 'nix eval --raw')" "$reason"
-bashrun "$S2" 'bash .claude/tests/run.sh' "$RUN_OK" >/dev/null
+bashrun "$S2" 'bash .claude/tests/run.sh' "$RUN_OK" "$ROOT" >/dev/null
 report C14-merge-cli-config-nix-left "nix eval" "$(state_of "$S2")" "run.sh だけでは解除しない"
-bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" >/dev/null
+bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" "$ROOT" >/dev/null
 report C15-merge-cli-config-cleared none "$(state_of "$S2")" "両方の成功で解除する"
+edit "$S2" Edit "$W/repo/flake.nix" >/dev/null
+bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" >/dev/null
+report C16-nix-no-cwd-kept "nix eval" "$(state_of "$S2")" "cwd が無い nix eval では、どの worktree か特定できないので解除しない"
+bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" "$W/outside" >/dev/null
+report C17-nix-other-cwd-kept "nix eval" "$(state_of "$S2")" "dotfiles 以外の cwd では解除しない"
+bashrun "$S2" "nix eval --raw $W/outside#homeConfigurations.ubuntu.activationPackage.drvPath" "$NIX_OK" "$ROOT" >/dev/null
+report C18-nix-other-flake-kept "nix eval" "$(state_of "$S2")" "cwd 以外の flake を明示した形では解除しない"
+rm -f "$ST/claude-verify-gate-$S2"
 
 echo "# D. 分類の表（run.sh / nix eval / 対象外）"
 n=0
@@ -187,10 +223,80 @@ report D-read-tool none "$(state_of "$S3")" "Edit 系以外のツールは記録
 echo "# E. セッションの分離"
 edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
 out=$(stop "$S3" false); report E01-other-stop "" "$out" "$out"
-bashrun "$S3" 'bash .claude/tests/run.sh' "$RUN_OK" >/dev/null
+bashrun "$S3" 'bash .claude/tests/run.sh' "$RUN_OK" "$ROOT" >/dev/null
 report E02-other-clear run.sh "$(state_of "$S1")" ""
-bashrun "$S1" 'bash .claude/tests/run.sh' "$RUN_OK" >/dev/null
+bashrun "$S1" 'bash .claude/tests/run.sh' "$RUN_OK" "$ROOT" >/dev/null
 report E03-own-clear none "$(state_of "$S1")" ""
+
+echo "# G. 同じ Git common-dir の worktree を同じ dotfiles として扱う"
+G="$W/gitrepo"
+GT="$W/gitwt"
+mkdir -p "$G/.claude/hooks" "$G/.claude/tests" "$G/opencode/hooks"
+cp "$HOOK" "$G/.claude/hooks/verify-gate.sh"
+: > "$G/.claude/hooks/x.sh"
+: > "$G/opencode/hooks/harness.sh"
+git -C "$G" init -q
+git -C "$G" add -A
+git -C "$G" -c user.name=test -c user.email=test@example.com commit -q -m init
+git -C "$G" worktree add -q --detach "$GT"
+GH="$G/.claude/hooks/verify-gate.sh"
+gedit() { # session tool path
+  local key=file_path; [ "$2" = NotebookEdit ] && key=notebook_path
+  jq -cn --arg s "$1" --arg t "$2" --arg k "$key" --arg f "$3" \
+    '{hook_event_name:"PostToolUse",session_id:$s,tool_name:$t,tool_input:{($k):$f},tool_response:{}}' \
+    | TMPDIR="$ST" bash "$GH"
+}
+gbashrun() { # session command stdout [cwd]
+  jq -cn --arg s "$1" --arg c "$2" --arg o "$3" --arg d "${4:-}" \
+    '{hook_event_name:"PostToolUse",session_id:$s,tool_name:"Bash",tool_input:{command:$c},tool_response:{stdout:$o,stderr:"",interrupted:false,isImage:false},cwd:$d}' \
+    | TMPDIR="$ST" bash "$GH"
+}
+gstop() { jq -cn --arg s "$1" --argjson a "$2" '{hook_event_name:"Stop",session_id:$s,stop_hook_active:$a}' | TMPDIR="$ST" bash "$GH"; }
+S4=test-vg-4-$$
+gedit "$S4" Edit "$GT/.claude/hooks/x.sh" >/dev/null
+report G01-worktree-edit run.sh "$(state_of "$S4")" "別 worktree の編集も同じリポジトリなら記録する"
+report G01b-worktree-bound "run.sh	$GT" "$(state_full "$S4")" "状態は編集した worktree に結び付く"
+gedit "$S4" Write "$GT/.claude/hooks/x.sh" >/dev/null
+report G02-worktree-edit-hook run.sh "$(state_of "$S4")" "重複しない"
+out=$(gstop "$S4" false)
+report G03-worktree-stop block "$(jget "$out" '.decision // "none"')" "$out"
+g3reason=$(jget "$out" '.reason // ""')
+report G03b-reason-worktree yes "$(has "$g3reason" "（${GT}）")" "Stop の説明に検証すべき worktree を示す"
+gbashrun "$S4" 'bash tests/run.sh 2>&1 | tail -3' "$RUN_OK" "$GT/.claude" >/dev/null
+report G04-worktree-relative-cleared none "$(state_of "$S4")" "worktree の .claude からの相対実行で解除する"
+gedit "$S4" Edit "$GT/.claude/hooks/x.sh" >/dev/null
+gbashrun "$S4" "cd $GT/.claude && bash tests/run.sh" "$RUN_OK" "$G/.claude" >/dev/null
+report G05-cd-other-worktree run.sh "$(state_of "$S4")" "開始 cwd が .claude でも cd 先の worktree では解除しない"
+gbashrun "$S4" 'bash tests/run.sh' "$RUN_OK" "$GT/.claude" >/dev/null
+report G06-worktree-direct-cleared none "$(state_of "$S4")" "直接の相対形なら解除する"
+gedit "$S4" Edit "$GT/opencode/hooks/harness.sh" >/dev/null
+report G07-worktree-opencode-hook run.sh "$(state_of "$S4")" "opencode の plugin/hook も run.sh 対象"
+# メイン checkout の .claude で成功しても、編集した worktree の保留は消さない
+gbashrun "$S4" 'bash tests/run.sh' "$RUN_OK" "$G/.claude" >/dev/null
+report G08-main-success-keeps-worktree "run.sh	$GT" "$(state_full "$S4")" "メイン checkout の成功では worktree の保留を解除しない"
+report G08b-main-no-entry no "$(has "$(state_full "$S4")" "run.sh	$G")" "メイン checkout の保留は作らない"
+gbashrun "$S4" 'bash tests/run.sh' "$RUN_OK" "$GT/.claude" >/dev/null
+report G09-worktree-success-clears none "$(state_of "$S4")" "同じ worktree の成功だけで解除する"
+# 1 セッションで 2 つの worktree を触っても、成功した worktree だけ解除する
+mkdir -p "$G/nix" "$GT/nix"
+: > "$G/nix/home.nix"
+: > "$GT/nix/home.nix"
+gedit "$S4" Edit "$G/nix/home.nix" >/dev/null
+gedit "$S4" Edit "$GT/nix/home.nix" >/dev/null
+report G0A-two-worktrees "nix eval,nix eval" "$(state_of "$S4")" "2 つの worktree を別エントリで保持する"
+gbashrun "$S4" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" "$G" >/dev/null
+report G0B-main-nix-cleared "nix eval	$GT" "$(state_full "$S4")" "メイン checkout の nix eval だけ解除する"
+gbashrun "$S4" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" "$GT" >/dev/null
+report G0C-worktree-nix-cleared none "$(state_of "$S4")" "worktree の nix eval で解除する"
+# cd で別 checkout へ移る複合形は、開始 cwd の worktree の成功とみなさない
+gedit "$S4" Edit "$GT/.claude/hooks/x.sh" >/dev/null
+gbashrun "$S4" "cd $G && bash .claude/tests/run.sh" "$RUN_OK" "$GT" >/dev/null
+report G0D-cd-main-keeps "run.sh" "$(state_of "$S4")" "cwd が worktree でも cd 先の main の成功では解除しない"
+gbashrun "$S4" "cd $GT && bash .claude/tests/run.sh" "$RUN_OK" "$G" >/dev/null
+report G0E-cd-worktree-keeps "run.sh" "$(state_of "$S4")" "cwd が main でも cd 先の worktree の成功では解除しない"
+gbashrun "$S4" 'bash .claude/tests/run.sh' "$RUN_OK" "$GT" >/dev/null
+report G0F-worktree-root-direct-cleared none "$(state_of "$S4")" "worktree 直下からの直接形だけで解除する"
+rm -f "$ST/claude-verify-gate-$S4"
 
 echo "# F. 異常入力（何も出さず exit 0。stderr も空）"
 ef() { # label input

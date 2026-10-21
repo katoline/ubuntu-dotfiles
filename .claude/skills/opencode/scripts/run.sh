@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
-# Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約して表示する。
+# Claude Code / Codex から OpenCode を非対話で起動して作業を任せ、結果を要約して表示する。
 # 指示は標準入力から読む。生の JSONL と stderr は ${TMPDIR:-/tmp}/claude-opencode-logs/ に残す。
+# 既定モデルが利用上限（レート制限・quota）のときだけ、fallback_models の順に切り替える。
+# --model を明示した場合はそのモデルだけで実行し、自動切替しない。
 # --auto は ask 規則（rm・git commit・git push 等）を自動承認してしまうため、決して付けない。
 set -euo pipefail
 
-default_model="opencode-go/claude-haiku-5-5#medium"
+default_model="opencode/deepseek-v4.1-flash-free"
+# 利用上限のときだけ、この順に1回ずつ試す（通常従量課金の opencode/deepseek-v4.1-flash は含めない）
+fallback_models=(
+  "opencode/deepseek-v4.1-flash-free"
+  "opencode/glm-5.3-flash-free"
+  "opencode-go/deepseek-v4.1-flash"
+)
 
 usage() {
   cat >&2 <<'EOF'
 Usage: run.sh [--dir DIR] [--model PROVIDER/MODEL#VARIANT] [--session ID] [--title TITLE] <<'PROMPT'
 ...指示...
 PROMPT
+
+--model を省略した場合、利用上限（レート制限・quota）のときだけ
+opencode/deepseek-v4.1-flash-free → opencode/glm-5.3-flash-free → opencode-go/deepseek-v4.1-flash
+の順に1回ずつ切り替える。--model を明示した場合は自動切替しない。
 EOF
   exit 2
 }
@@ -24,12 +36,13 @@ need_value() {
 
 dir="$PWD"
 model="$default_model"
+model_explicit=0
 session=""
 title=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dir) need_value "$@"; dir="$2"; shift 2 ;;
-    --model|-m) need_value "$@"; model="$2"; shift 2 ;;
+    --model|-m) need_value "$@"; model="$2"; model_explicit=1; shift 2 ;;
     --session|-s) need_value "$@"; session="$2"; shift 2 ;;
     --title) need_value "$@"; title="$2"; shift 2 ;;
     --auto)
@@ -71,39 +84,152 @@ fi
 log_dir="${TMPDIR:-/tmp}/claude-opencode-logs"
 mkdir -p "$log_dir"
 stamp="$(date +%Y%m%d-%H%M%S)-$$"
-log_json="$log_dir/$stamp.jsonl"
-log_err="$log_dir/$stamp.stderr.log"
 
-args=(run --format json -m "$model" --title "$title")
-if [ -n "$session" ]; then
-  args+=(--session "$session")
+# --model を明示したときは自動切替しない（既定値と同じ文字列でも明示指定を優先する）
+candidates=("${fallback_models[@]}")
+if [ "$model_explicit" -eq 1 ]; then
+  candidates=("$model")
 fi
 
-rc=0
-(cd -- "$dir" && opencode "${args[@]}" -- "$prompt" </dev/null >"$log_json" 2>"$log_err") || rc=$?
+resume_session="$session"
+user_session="$session"
+final_model=""
+final_log_json=""
+final_log_err=""
+final_rc=1
+attempt_count=0
+attempt_model=()
+attempt_status=()
+attempt_log=()
+attempt_errlog=()
+attempt_session=()
 
-# head で切ると長いログで jq が SIGPIPE になり pipefail で落ちるので、jq 側で最初の1件に絞る
-session_id="$(jq -Rrn 'first(inputs | fromjson? | .sessionID // empty)' "$log_json")"
-if [ -z "$session_id" ]; then
-  echo "エラー: OpenCode のセッションIDを取得できませんでした（終了コード $rc）" >&2
-  echo "--- stderr の末尾（$log_err） ---" >&2
-  sed 's/\x1b\[[0-9;]*m//g' "$log_err" | tail -n 20 >&2 || true
-  echo "--- JSONL: $log_json ---" >&2
-  if [ "$rc" -eq 0 ]; then
-    rc=1
+# 利用上限だけを切替対象にする。通常の本文やツール出力に含まれる文言は見ない。
+limit_jq='
+  [inputs | fromjson? | select(type == "object" and .type == "error") | .error]
+  | any(
+      (. as $e
+       | ((($e | type) == "object") and (
+           (((($e.type // "") | tostring)) | test("^provider\\.(rate-limit|quota)$"))
+           or (((($e.status // "") | tostring)) == "429")
+           or (((($e.name // "") | tostring)) | test("^(FreeUsageLimitError|GoUsageLimitError)$"))
+           or (((($e.type // "") | tostring)) | test("^(FreeUsageLimitError|GoUsageLimitError)$"))
+           or (((($e.message // "") | tostring)) | test("FreeUsageLimitError|GoUsageLimitError"))
+         ))
+       or ((($e | type) == "string") and ((($e | tostring)) | test("FreeUsageLimitError|GoUsageLimitError")))
+      )
+    )
+'
+
+for candidate in "${candidates[@]}"; do
+  attempt_count=$((attempt_count + 1))
+  log_json="$log_dir/$stamp-attempt$attempt_count.jsonl"
+  log_err="$log_dir/$stamp-attempt$attempt_count.stderr.log"
+
+  used_session="$resume_session"
+  run_prompt="$prompt"
+  if [ "$attempt_count" -gt 1 ] && [ -n "$resume_session" ]; then
+    # 直前の試行で得た OpenCode セッションを続ける。完了済みの操作をやり直させない
+    run_prompt="前回の実行は利用上限で途中終了した。同じOpenCodeセッションの続きとして、完了済みの操作をやり直さず、未完了の作業から再開して最後まで完了すること。
+
+$prompt"
   fi
-  exit "$rc"
+
+  args=(run --format json --agent delegated-worker -m "$candidate" --title "$title")
+  if [ -n "$resume_session" ]; then
+    args+=(--session "$resume_session")
+  fi
+
+  rc=0
+  (cd -- "$dir" && opencode "${args[@]}" -- "$run_prompt" </dev/null >"$log_json" 2>"$log_err") || rc=$?
+
+  sid="$(jq -Rrn 'first(inputs | fromjson? | .sessionID // empty)' "$log_json")"
+  if [ -z "$user_session" ] && [ -n "$sid" ]; then
+    # 利用者が --session を指定した場合はそのIDを維持する
+    resume_session="$sid"
+  fi
+
+  has_error=0
+  n_err="$(jq -Rrn '[inputs | fromjson? | select(type == "object" and .type == "error")] | length' "$log_json" "$log_err")"
+  if [ "${n_err:-0}" -gt 0 ]; then
+    has_error=1
+  fi
+  is_limit=0
+  if [ "$has_error" -eq 1 ] && [ "$(jq -Rrn "$limit_jq" "$log_json" "$log_err")" = "true" ]; then
+    is_limit=1
+  fi
+  # stderr に明確な上限エラーのクラス名だけが出る場合も切替対象にする（本文の rate limit 文言は見ない）
+  if [ "$is_limit" -eq 0 ] && [ "$rc" -ne 0 ] && grep -Eq '(FreeUsageLimitError|GoUsageLimitError)' "$log_err" 2>/dev/null; then
+    is_limit=1
+  fi
+
+  attempt_model[$attempt_count]="$candidate"
+  attempt_log[$attempt_count]="$log_json"
+  attempt_errlog[$attempt_count]="$log_err"
+  attempt_session[$attempt_count]="${used_session:-なし}"
+
+  if [ "$has_error" -eq 1 ] || [ "$rc" -ne 0 ]; then
+    final_model="$candidate"
+    final_log_json="$log_json"
+    final_log_err="$log_err"
+    if [ "$rc" -eq 0 ]; then
+      final_rc=1   # 0 終了でも error イベントが残る実行は成功扱いしない
+    else
+      final_rc="$rc"
+    fi
+    if [ "$is_limit" -eq 1 ] && [ "$model_explicit" -eq 0 ] && [ "$attempt_count" -lt "${#candidates[@]}" ]; then
+      attempt_status[$attempt_count]="利用上限のため次のモデルへ切替"
+      continue
+    fi
+    if [ "$is_limit" -eq 1 ]; then
+      attempt_status[$attempt_count]="利用上限のため停止"
+    elif [ "$has_error" -eq 1 ]; then
+      attempt_status[$attempt_count]="利用上限以外の失敗のため停止"
+    else
+      attempt_status[$attempt_count]="失敗のため停止"
+    fi
+    break
+  fi
+
+  final_model="$candidate"
+  final_log_json="$log_json"
+  final_log_err="$log_err"
+  final_rc=0
+  attempt_status[$attempt_count]="成功"
+  break
+done
+
+session_id="$resume_session"
+if [ -z "$session_id" ] && [ -n "$final_log_json" ]; then
+  session_id="$(jq -Rrn 'first(inputs | fromjson? | .sessionID // empty)' "$final_log_json")"
 fi
+# セッションIDが取れない実行は、成功終了でも続行不能として非0にする
+if [ -z "$session_id" ] && [ "$final_rc" -eq 0 ]; then
+  final_rc=1
+fi
+
+model="$final_model"
+log_json="$final_log_json"
+log_err="$final_log_err"
 
 # stderr に出る「permission requested: ...; auto-rejecting」を JSON 側の取りこぼし対策として拾う
 rejected_stderr="$(sed 's/\x1b\[[0-9;]*m//g' "$log_err" | grep -E 'auto-rejecting' | sed 's/^[^a-zA-Z]*//' || true)"
 
 echo "## OpenCode 実行結果"
 echo
-echo "- セッションID: $session_id"
+if [ -n "$session_id" ]; then
+  echo "- セッションID: $session_id"
+else
+  echo "- セッションID: 取得できませんでした（--session での続行はできません）"
+fi
 echo "- モデル: $model"
 echo "- 作業ディレクトリ: $dir"
-echo "- 終了コード: $rc"
+echo "- 終了コード: $final_rc"
+if [ "$model_explicit" -eq 1 ]; then
+  echo "- モデル指定: 明示（自動切替なし）"
+elif [ "$attempt_count" -gt 1 ]; then
+  echo "- モデルの自動切替: 利用上限のため ${attempt_count} 回試行"
+fi
 echo
 
 jq -Rnr --arg dir "$dir" '
@@ -145,15 +271,19 @@ jq -Rnr --arg dir "$dir" '
       | "  - トークン: input \([$t[] | .input // 0] | add // 0) / output \([$t[] | .output // 0] | add // 0) / reasoning \([$t[] | .reasoning // 0] | add // 0) / cache read \([$t[] | .cache.read // 0] | add // 0) / cache write \([$t[] | .cache.write // 0] | add // 0)" )
 ' "$log_json"
 
-# 正確な値はセッション累計として session export の info から取る（本文は保存しない）
-session_total="$(cd -- "$dir" && timeout 60 opencode session export "$session_id" </dev/null 2>/dev/null | jq -r '
-  .info | select(.cost != null)
-  | "- セッション累計（session export）: $\(.cost * 1000000 | round / 1000000)\n  - トークン: input \(.tokens.input // 0) / output \(.tokens.output // 0) / reasoning \(.tokens.reasoning // 0) / cache read \(.tokens.cache.read // 0) / cache write \(.tokens.cache.write // 0)"
-' 2>/dev/null || true)"
-if [ -n "$session_total" ]; then
-  printf '%s\n' "$session_total"
+if [ -n "$session_id" ]; then
+  # 正確な値はセッション累計として session export の info から取る（本文は保存しない）
+  session_total="$(cd -- "$dir" && timeout 60 opencode session export "$session_id" </dev/null 2>/dev/null | jq -r '
+    .info | select(.cost != null)
+    | "- セッション累計（session export）: $\(.cost * 1000000 | round / 1000000)\n  - トークン: input \(.tokens.input // 0) / output \(.tokens.output // 0) / reasoning \(.tokens.reasoning // 0) / cache read \(.tokens.cache.read // 0) / cache write \(.tokens.cache.write // 0)"
+  ' 2>/dev/null || true)"
+  if [ -n "$session_total" ]; then
+    printf '%s\n' "$session_total"
+  else
+    echo "- セッション累計: 取得できませんでした（opencode session export $session_id で確認）"
+  fi
 else
-  echo "- セッション累計: 取得できませんでした（opencode session export $session_id で確認）"
+  echo "- セッション累計: セッションIDがないため取得できませんでした"
 fi
 
 if [ -n "$rejected_stderr" ]; then
@@ -163,14 +293,26 @@ if [ -n "$rejected_stderr" ]; then
 fi
 
 echo
-echo "### ログ"
+echo "### モデル試行"
+for i in $(seq 1 "$attempt_count"); do
+  echo "- $i. ${attempt_model[$i]}（セッション: ${attempt_session[$i]}）: ${attempt_status[$i]}"
+  echo "  - JSONL: ${attempt_log[$i]}"
+  echo "  - stderr: ${attempt_errlog[$i]}"
+done
+
+echo
+echo "### ログ（最終試行）"
 echo "- JSONL: $log_json"
 echo "- stderr: $log_err"
 echo
 echo "### 続行方法"
-printf "bash ~/.claude/skills/opencode/scripts/run.sh --dir %q --session %s <<'EOF'\n...追加の指示...\nEOF\n" "$dir" "$session_id"
-if [ "$model" != "$default_model" ]; then
-  echo "（同じモデルで続けるなら --model $(printf '%q' "$model") も付ける）"
+if [ -n "$session_id" ]; then
+  printf "bash ~/.claude/skills/opencode/scripts/run.sh --dir %q --session %s <<'EOF'\n...追加の指示...\nEOF\n" "$dir" "$session_id"
+  if [ "$model_explicit" -eq 1 ]; then
+    echo "（同じモデルで続けるなら --model $(printf '%q' "$model") も付ける）"
+  fi
+else
+  echo "- セッションIDが取得できなかったため、--session での続行案内はありません。上の試行ログを確認してください。"
 fi
 
-exit "$rc"
+exit "$final_rc"

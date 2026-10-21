@@ -103,7 +103,7 @@ rm -rf "$H2" "$D2"
 echo "# F. Codex専用スキルを他CLIの共有探索先へ配らない"
 REPO_DIR="$(cd "$TESTS_DIR/../.." && pwd)"
 # home.file の宛先と Codex スキルの source の組を取り出す。
-# 同名スキルを5本置くだけでなく、実際のリンク先が専用ディレクトリであることを確認する。
+# 同名スキルを6本置くだけでなく、実際のリンク先が専用ディレクトリであることを確認する。
 codex_skill_links=$(awk '
   /^[[:space:]]*"[^"]+"[[:space:]]*=[[:space:]]*\{/ {
     dest = $0
@@ -118,8 +118,8 @@ codex_skill_links=$(awk '
   }
 ' "$REPO_DIR/nix/home.nix")
 n=$(printf '%s\n' "$codex_skill_links" | grep -c '=')
-report F01-codex-skill-count 5 "$n" "$codex_skill_links"
-for skill in pr readme nix-setup git-pull clean-branches; do
+report F01-codex-skill-count 6 "$n" "$codex_skill_links"
+for skill in pr readme nix-setup git-pull clean-branches opencode; do
   actual=$(printf '%s\n' "$codex_skill_links" | grep -Fx ".codex/skills/$skill=$skill")
   report "F02-${skill}-private-link" ".codex/skills/$skill=$skill" "$actual" "$codex_skill_links"
 done

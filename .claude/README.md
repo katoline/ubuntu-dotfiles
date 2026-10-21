@@ -24,11 +24,10 @@
 | `skills/clean-branches/SKILL.md` | `/clean-branches` スキル：ローカルブランチのうちデフォルトブランチ・使用中のブランチ以外を削除して整理（未マージは確認後のみ） |
 | `skills/nix-setup/SKILL.md` | `/nix-setup` スキル：新規プロジェクトの開発環境をNix devShell + direnvでセットアップ |
 | `skills/git-pull/SKILL.md` | `/git-pull` スキル：直下の各リポジトリを `main` に切り替えてfast-forward-onlyでpull（変更があるリポジトリはスキップ） |
-| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ（`scripts/run.sh`、既定モデル `opencode-go/claude-haiku-5-5#medium`、`--auto` は使わない）、結果を要約・レビューする。Claude Code 専用（OpenCode では `opencode.json` で deny） |
-| `skills/codex/SKILL.md` | `/codex` スキル：Claude Code から Codex CLI を `codex exec` で起動して作業を任せ（`scripts/run.sh`、既定 `gpt-6.1-sol` の medium、サンドボックスは workspace-write 固定）、結果を要約・レビューする。Claude Code 専用（OpenCode では `opencode.json` で deny） |
+| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約・レビューする。オプションなしは今回だけ、`--session-wide` は以後の実装も委譲、`--once` は解除（親会話の状態で持ち、永続化しない）。既定モデル `opencode/deepseek-v4.1-flash-free`、利用上限時は `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` の順に自動切替（`--model` 明示時は切替なし、`--auto` は使わない）。Go は Console の Use balance を無効にする前提。Claude Code 専用（OpenCode では `opencode.json` で deny）。Codex は `codex/skills/opencode/SKILL.md` から同じ `scripts/run.sh` を使う。ランナーは OpenCode を `--agent delegated-worker`（Skill / subagent / question / execute・Git 書き込み・PR・worktree 変更なし）で起動し、単体の build とは分離する |
 | `claude-notify.example.json` | iPhoneプッシュ通知（claude-notify）設定のテンプレート |
 | `setup.sh` | `.claude/` 配下（gitが管理するファイルのみ）を `~/.claude` へシンボリックリンクするスクリプト |
-| `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / validate-claude-config / Grok 互換 / Codex の `codex/hooks/guard.sh`）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
+| `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / validate-claude-config / Grok 互換 / Codex の `codex/hooks/guard.sh`）、OpenCode 委譲ランナーのモデル切替テスト（opencode-run）、OpenCode の単体 build / `delegated-worker` の実効 permission テスト（opencode-permissions）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
 
 ## セットアップ（反映方法）
 
@@ -37,6 +36,8 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 ```
 
 `.claude/` 配下でgitが認識しているファイル（追跡済み＋未追跡かつ`.gitignore`対象外。gitが使えない環境では`find`にフォールバックし、除外リストだけで秘密ファイル等を守る）が `~/.claude` へシンボリックリンクされる。ディレクトリ構成はそのまま再現される。グローバル指示（`~/.claude/CLAUDE.md` と `~/.claude/rules/claude.md`）は全CLI共通の [`ai/`](../ai/README.md) が実体なので、こちらではなく `bash ai/install.sh` が配る。以後はこのリポジトリを編集するだけで全プロジェクトに即反映される（コピー作業は不要）。
+
+ただし「リンク先の実体が更新される」ことと「実行中の LLM セッションが指示を読み直す」ことは別。グローバル指示はセッション開始時に読み込まれた版が使われ、変更は再起動か `/clear` まで反映されない。プロジェクトルートの `CLAUDE.md` だけは `/compact` でも読み直されるが、このリポジトリは `AGENTS.md` に集約しており `CLAUDE.md` は新設しない（`AGENTS.md` が compact で再読されるかは断定しない）。詳細は [memory](https://code.claude.com/docs/en/memory)。
 
 - **ファイルを追加したら再実行するだけ**でリンクされる（スクリプトの修正は不要）
 - `skills/` や `commands/` などのディレクトリを作れば、そのまま `~/.claude` 配下に反映され、Claude / Grok で使える
@@ -62,13 +63,14 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
   - `PreToolUse` の `hooks/pr-mode.sh`・`hooks/guard-destructive.sh` は、高負荷時の打ち切りを減らすため timeout を30秒とし、`onFailure: "block"` を付けている。**外さないこと**（外すと安全装置が壊れたとき＝起動不能・タイムアウト・想定外の exit コードのときに黙って素通りになる）。代償として、フックのファイルが消える・壊れると全 Bash が止まる
   - Orca（エージェント管理アプリ）が書き込んだフックと `statusLine`（コマンドに `orca` を含むもの）は外部ツール由来なので手で編集しない。`tests/run.sh` が「登録元が `bash $HOME/.claude/hooks/<実在するスクリプト>` か許可リストの外部ツールか」を検査し、知らない登録元が増えたら落ちる
 - `env.CLAUDE_CODE_SUBAGENT_MODEL`：`opus`（サブエージェントの既定モデル。振り分けは `ai/claude.md`）
+- Agent ツール呼び出しの `effort`（`ai/claude.md` で検索・事実確認・要約・機械的作業を `medium` に落とす指定）は Claude Code v2.1.292 以降が対応（[Choose an effort level](https://code.claude.com/docs/en/sub-agents)）。サブエージェントのモデル既定値 `CLAUDE_CODE_SUBAGENT_MODEL` は変更しない
 - `skipWorkflowUsageWarning`：`true`
 - `theme`：`dark`
 - `model`：`/model` で Claude Code 自身が書き換えるため現在値は転記しない（実際の値は settings.json を参照）
 - `language`：`japanese`
 - `effortLevel`：`/effort` や `/config` で Claude Code 自身が書き換えるため、このREADMEには現在値を転記しない（実際の値は settings.json を参照。差分はコミットするだけでよい）
 - `tui`：`fullscreen`
-- `agentPushNotifEnabled`：`true`（Remote Control接続時にClaudeの判断でスマホへプッシュ通知する公式機能。claude-notifyとは別系統）
+- `agentPushNotifEnabled`：`false`（Remote Control接続時にClaudeの判断でスマホへプッシュ通知する公式機能。バックグラウンドのエージェント実行でも通知が飛ぶため無効。claude-notifyとは別系統で、こちらの通知は維持する）
 
 ## Git操作の制限（/pr フロー）
 
@@ -157,7 +159,7 @@ bash .claude/tests/run.sh
 
 **Grok CLI でも同じ通知が届く**。notify.sh が `GROK_HOOK_EVENT` で呼び出し元を判別し、応答完了（`reason == "end_turn"` の Stop）と許可待ち（`notificationType == "permission_prompt"` の Notification）だけをタイトル「(Grok)」付きで通知する。
 
-**OpenCode V2 でもタスク完了時に同じ通知が届く**。`opencode/plugins/mobile-notify.js` が`session.execution.succeeded`の`data.sessionID`を使って親セッションの正常完了だけを通知する。Claude/Grokと同じ設定・送信スクリプトを使うため、既に通知を設定済みなら追加作業は不要。プラグインはhome-managerで`~/.config/opencode/plugins/`へリンクされる。
+**OpenCode V2 からは通知を送信しない**。`opencode/cli.json` の `attention.notifications` を `false` にし、`opencode/plugins/mobile-notify.js` は無効化した互換入口として残している（イベント購読・送信プロセス起動を行わない）。Claude/Grok の通知フック・claude-notify 送信機能・設定そのものは変更していない。
 
 新しい PC で使うには（`home-manager switch` 実行後）:
 
