@@ -36,6 +36,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # home-manager switch は実行せず、宣言設定を評価する。
+      - name: Nix の設定を評価
+        run: nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath
+
+      - name: Nix の Node.js を実行して確認
+        run: nix run .#nodejs-security -- --version
+
       # 事故防止テストはリポジトリが許可された開発ルート配下にある前提で動く。
       - name: テスト用の開発ルートを準備
         run: |
@@ -46,7 +53,17 @@ jobs:
       # AGENTS.md の設定・フック・共通指示の検証。
       - name: 設定とフックのテスト
         working-directory: ${{ env.DOTFILES_TEST_ROOT }}
-        run: bash .claude/tests/run.sh
+        run: |
+          log="$RUNNER_TEMP/dotfiles-tests.log"
+          if bash .claude/tests/run.sh > "$log" 2>&1; then
+            cat "$log"
+          else
+            status=$?
+            cat "$log"
+            # 失敗したケースをチェック画面にも残す（元の終了コードは維持する）。
+            python3 -c 'import pathlib, sys; [print("::error::" + line.replace("%", "%25").replace("\r", "%0D")) for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if "✗" in line or line.lstrip().startswith(("NG ", "error:"))]' "$log"
+            exit "$status"
+          fi
 
       # インストールや配布は行わず、シェルの構文だけを確認する。
       - name: シェル構文を検証
@@ -54,13 +71,6 @@ jobs:
           bash -n bootstrap.sh
           bash -n opencode/setup.sh
           bash -n zsh/.zshrc
-
-      # home-manager switch は実行せず、宣言設定を評価する。
-      - name: Nix の設定を評価
-        run: nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath
-
-      - name: Nix の Node.js を実行して確認
-        run: nix run .#nodejs-security -- --version
 
       # lockfileVersion 9.0 に対応する固定版を CI 内だけに導入する。
       - name: pnpm を準備
