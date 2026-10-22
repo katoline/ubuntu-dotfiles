@@ -106,3 +106,9 @@ home-manager switch --flake .#ubuntu
 - リポジトリの配置は `~/Dev/kaishi/ubuntu-dotfiles` 固定（`flake.nix` の `dotfilesPath` がユーザー名から自動で導かれる）。別の場所に置きたい場合は `dotfilesPath` と `bootstrap.sh` の両方を変更する
 - 構成名はホスト名に依存しない固定名 `ubuntu`。適用コマンドでは常に `#ubuntu` を明示する
 - `system` は `x86_64-linux` を既定にしている。ARM環境（aarch64）で使う場合は `flake.nix` の `system` を `aarch64-linux` に手動で変更すること
+
+## Node.js のセキュリティ更新（2026年10月）
+
+[Node.js公式の2026年10月セキュリティ告知](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)に対応し、22系は22.23.4、24系は24.22.1、26系は26.12.1以上を必要とする。EOLの系列は使用しない。
+
+Nixの`nodejs-nixpkgs`入力は、Node.jsと共有ライブラリ（Brotli等）の修正を含む公式`nixos-unstable-small`を固定する。他の開発ツールは既存の`nixpkgs`入力に固定したまま、Node.jsとpnpmが使うNode.jsだけを差し替えている。更新時は`nix flake update nodejs-nixpkgs`を使い、CIを確認する。バージョン番号だけを書き換えたり、`knownVulnerabilities`やハッシュ検証を無効化して通したりしない。
