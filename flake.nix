@@ -37,6 +37,9 @@
         config.allowUnfree = true;
         overlays = [
           (_: prev: {
+            # Git等が使うTLSライブラリとCA証明書も修正版へそろえる。
+            openssl = nodejsPkgs.openssl;
+            cacert = nodejsPkgs.cacert;
             nodejs_26 = secureNode;
             pnpm = prev.pnpm.override { nodejs-slim = secureNode; };
           })
