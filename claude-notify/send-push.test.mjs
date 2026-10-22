@@ -4,7 +4,7 @@ import {
   closeSync,
   mkdtempSync,
   openSync,
-  readFileSync,
+  readSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -18,12 +18,26 @@ const webpushUrl = pathToFileURL(
   createRequire(import.meta.url).resolve("web-push")
 ).href;
 
+/** 作成済みの記述子を使い、子プロセスが書いたログを先頭から読む。 */
+function readLog(log) {
+  const chunks = [];
+  const buffer = Buffer.alloc(4096);
+  let position = 0;
+  while (true) {
+    const bytesRead = readSync(log, buffer, 0, buffer.length, position);
+    if (bytesRead === 0) break;
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    position += bytesRead;
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** 実設定やネットワークを使わず、別プロセスの診断ログを検証する。 */
 function runWithDummyConfig(config, preload = "", scriptArgs = []) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "notify-log-test-"));
   const configPath = path.join(dir, "config.json");
   const logPath = path.join(dir, "stderr.log");
-  const log = openSync(logPath, "w", 0o600);
+  const log = openSync(logPath, "w+", 0o600);
   try {
     writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
     const args = preload
@@ -40,7 +54,7 @@ function runWithDummyConfig(config, preload = "", scriptArgs = []) {
     });
     assert.equal(result.error, undefined);
     assert.equal(result.status, 0);
-    return readFileSync(logPath, "utf8");
+    return readLog(log);
   } finally {
     closeSync(log);
     rmSync(dir, { recursive: true, force: true });
@@ -151,7 +165,7 @@ test("不正な設定の診断に秘密鍵の抜粋を含めない", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "notify-log-test-"));
   const configPath = path.join(dir, "config.json");
   const logPath = path.join(dir, "stderr.log");
-  const log = openSync(logPath, "w", 0o600);
+  const log = openSync(logPath, "w+", 0o600);
   try {
     // JSON.parse は引用符のない値をエラーへ抜粋する。実際の設定・送信は使わない。
     writeFileSync(configPath, '{"privateKey": DUMMY_PRIVATE_KEY}', {
@@ -168,7 +182,7 @@ test("不正な設定の診断に秘密鍵の抜粋を含めない", () => {
     );
     assert.equal(result.error, undefined);
     assert.equal(result.status, 0);
-    const stderr = readFileSync(logPath, "utf8");
+    const stderr = readLog(log);
     assert.match(stderr, /設定ファイルの JSON が不正です/);
     assert.doesNotMatch(stderr, /DUMMY|PRIVATE_KEY|vateKey/);
   } finally {
