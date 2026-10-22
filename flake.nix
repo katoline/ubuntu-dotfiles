@@ -2,7 +2,7 @@
   description = "Ubuntu environment (home-manager standalone)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.follows = "nodejs-nixpkgs";
     # Node.js とその共有ライブラリは、セキュリティ修正済みの入力から供給する。
     nodejs-nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
     home-manager = {
@@ -37,9 +37,6 @@
         config.allowUnfree = true;
         overlays = [
           (_: prev: {
-            # Git等が使うTLSライブラリとCA証明書も修正版へそろえる。
-            openssl = nodejsPkgs.openssl;
-            cacert = nodejsPkgs.cacert;
             nodejs_26 = secureNode;
             pnpm = prev.pnpm.override { nodejs-slim = secureNode; };
           })
@@ -48,6 +45,8 @@
       # CLI 設定のマージとテストで同じ Python・依存を使う。
       cliConfigPython = pkgs.python3.withPackages (ps: [ ps.tomlkit ]);
     in
+    assert pkgs.lib.versionAtLeast pkgs.openssl.version "3.5.9";
+    assert pkgs.lib.versionAtLeast pkgs.cacert.version "3.131.1";
     {
       packages.${system} = {
         cli-config-python = cliConfigPython;
