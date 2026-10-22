@@ -74,3 +74,7 @@ jobs:
       - name: claude-notify を Biome で検証
         working-directory: claude-notify
         run: pnpm lint
+
+      - name: claude-notify の秘密情報ログ防止を検証
+        working-directory: claude-notify
+        run: pnpm test

@@ -61,9 +61,10 @@ function loadConfig(configPath) {
   let config;
   try {
     config = JSON.parse(raw);
-  } catch (err) {
+  } catch {
     process.stderr.write(
-      `[claude-notify] 設定ファイルの JSON が不正です: ${configPath} (${err.message})\n${SETUP_HINT}\n`
+      // JSON.parse のエラーには入力の抜粋（VAPID秘密鍵を含みうる）が入る。
+      `[claude-notify] 設定ファイルの JSON が不正です: ${configPath}\n${SETUP_HINT}\n`
     );
     return null;
   }
@@ -267,7 +268,7 @@ async function main() {
       );
     } else if (statusCode) {
       process.stderr.write(
-        `[claude-notify] 通知の送信に失敗しました（HTTP ${statusCode}）: ${err.body ?? err.message}\n`
+        `[claude-notify] 通知の送信に失敗しました（HTTP ${statusCode}）。\n`
       );
     } else {
       process.stderr.write(

@@ -22,6 +22,8 @@ Claude Code / Grok CLI の Stop / Notification フックから iPhone へ Web Pu
 
 パスを変えたいときだけ環境変数 `CLAUDE_NOTIFY_CONFIG`（設定JSON）と `CLAUDE_NOTIFY_NODE`（node バイナリ）を使う。通常は不要。
 
+設定 JSON の解析エラーには内容の抜粋を含めない。送信先から返るエラー本文もログへ出さず、HTTP ステータスだけを記録する（秘密鍵・購読情報・通知内容の漏えい防止）。`pnpm test` はダミーの不正設定だけを使い、通知を送らずにログへの漏えいを検証する。
+
 ## 疎通テスト
 
 ```zsh

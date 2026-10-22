@@ -6,6 +6,7 @@
   "description": "Claude Code の hook から Web Push 通知を送る送信側スクリプト",
   "scripts": {
     "send": "node send-push.mjs",
+    "test": "node --test",
     "lint": "biome check .",
     "lint:fix": "biome check --write ."
   },
