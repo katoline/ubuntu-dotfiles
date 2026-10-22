@@ -46,8 +46,10 @@
       cliConfigPython = pkgs.python3.withPackages (ps: [ ps.tomlkit ]);
     in
     {
-      packages.${system}.cli-config-python = cliConfigPython;
-      packages.${system}.nodejs-security = secureNode;
+      packages.${system} = {
+        cli-config-python = cliConfigPython;
+        nodejs-security = secureNode;
+      };
 
       # マシン（ホスト名）に依存しない固定の構成名。
       # 適用時は `--flake <リポジトリ>#ubuntu` と明示的に指定する

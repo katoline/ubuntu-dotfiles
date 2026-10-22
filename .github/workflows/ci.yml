@@ -38,16 +38,7 @@ jobs:
 
       # home-manager switch は実行せず、宣言設定を評価する。
       - name: Nix の設定を評価
-        run: |
-          log="$RUNNER_TEMP/nix-eval-error.log"
-          if nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2> "$log"; then
-            cat "$log"
-          else
-            status=$?
-            cat "$log"
-            python3 -c 'import pathlib, sys; text=pathlib.Path(sys.argv[1]).read_text()[-12000:]; print("::error::" + text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))' "$log"
-            exit "$status"
-          fi
+        run: nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath
 
       - name: Nix の Node.js を実行して確認
         run: nix run .#nodejs-security -- --version
@@ -62,17 +53,7 @@ jobs:
       # AGENTS.md の設定・フック・共通指示の検証。
       - name: 設定とフックのテスト
         working-directory: ${{ env.DOTFILES_TEST_ROOT }}
-        run: |
-          log="$RUNNER_TEMP/dotfiles-tests.log"
-          if bash .claude/tests/run.sh > "$log" 2>&1; then
-            cat "$log"
-          else
-            status=$?
-            cat "$log"
-            # 失敗したケースをチェック画面にも残す（元の終了コードは維持する）。
-            python3 -c 'import pathlib, sys; [print("::error::" + line.replace("%", "%25").replace("\r", "%0D")) for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if "✗" in line or line.lstrip().startswith(("NG ", "error:"))]' "$log"
-            exit "$status"
-          fi
+        run: bash .claude/tests/run.sh
 
       # インストールや配布は行わず、シェルの構文だけを確認する。
       - name: シェル構文を検証
