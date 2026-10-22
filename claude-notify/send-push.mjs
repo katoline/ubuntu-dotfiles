@@ -13,6 +13,33 @@ import webpush from "web-push";
 const SETUP_HINT =
   "セットアップ手順は dotfiles の .claude/README.md、および claude-notify-mobile リポジトリの docs/SETUP.md を参照してください（VAPID 鍵の生成・購読情報の登録が必要です）。";
 
+// 例外の本文には設定値・送信先・秘密情報が含まれうるため、固定の識別子だけを診断に使う。
+const SAFE_ERROR_CODES = new Set([
+  "EACCES",
+  "EPERM",
+  "ENOENT",
+  "ENOTDIR",
+  "EISDIR",
+  "ENOSPC",
+  "EROFS",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY",
+]);
+
+function safeErrorCodeSuffix(error) {
+  const code = error?.code;
+  return SAFE_ERROR_CODES.has(code) ? `（${code}）` : "";
+}
+
 /** CLI 引数を --key value 形式でパースする */
 function parseArgs(argv) {
   const args = {};
@@ -53,7 +80,7 @@ function loadConfig(configPath) {
     raw = fs.readFileSync(configPath, "utf8");
   } catch (err) {
     process.stderr.write(
-      `[claude-notify] 設定ファイルを読み込めませんでした: ${configPath} (${err.message})\n${SETUP_HINT}\n`
+      `[claude-notify] 設定ファイルを読み込めませんでした: ${configPath}${safeErrorCodeSuffix(err)}\n${SETUP_HINT}\n`
     );
     return null;
   }
@@ -146,7 +173,7 @@ function saveState(statePath, state) {
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf8");
   } catch (err) {
     process.stderr.write(
-      `[claude-notify] 状態ファイルの書き込みに失敗しました（デバウンスが機能しない可能性があります）: ${err.message}\n`
+      `[claude-notify] 状態ファイルの書き込みに失敗しました（デバウンスが機能しない可能性があります）${safeErrorCodeSuffix(err)}\n`
     );
   }
 }
@@ -184,10 +211,11 @@ function recordSendTime(statePath, event, now = new Date()) {
 function withTimeout(promise, ms) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`送信がタイムアウトしました（${ms}ms）`)),
-      ms
-    );
+    timer = setTimeout(() => {
+      const error = new Error("通知の送信がタイムアウトしました");
+      error.code = "ETIMEDOUT";
+      reject(error);
+    }, ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -236,11 +264,18 @@ async function main() {
     return;
   }
 
-  webpush.setVapidDetails(
-    config.vapid.subject,
-    config.vapid.publicKey,
-    config.vapid.privateKey
-  );
+  try {
+    webpush.setVapidDetails(
+      config.vapid.subject,
+      config.vapid.publicKey,
+      config.vapid.privateKey
+    );
+  } catch (err) {
+    process.stderr.write(
+      `[claude-notify] VAPID 情報の形式が不正です${safeErrorCodeSuffix(err)}。\n${SETUP_HINT}\n`
+    );
+    return;
+  }
 
   const payload = JSON.stringify({
     title,
@@ -261,18 +296,22 @@ async function main() {
     );
     process.stderr.write(`[claude-notify] 通知を送信しました: "${title}"\n`);
   } catch (err) {
-    const statusCode = err && err.statusCode;
+    const statusCode = err?.statusCode;
     if (statusCode === 404 || statusCode === 410) {
       process.stderr.write(
         "[claude-notify] 購読が失効しています。PWA を開いて再ペアリングしてください。\n"
       );
-    } else if (statusCode) {
+    } else if (
+      Number.isInteger(statusCode) &&
+      statusCode >= 100 &&
+      statusCode <= 599
+    ) {
       process.stderr.write(
         `[claude-notify] 通知の送信に失敗しました（HTTP ${statusCode}）。\n`
       );
     } else {
       process.stderr.write(
-        `[claude-notify] 通知の送信に失敗しました: ${err && err.message ? err.message : err}\n`
+        `[claude-notify] 通知の送信に失敗しました${safeErrorCodeSuffix(err)}。\n`
       );
     }
   }
@@ -281,7 +320,7 @@ async function main() {
 main()
   .catch((err) => {
     process.stderr.write(
-      `[claude-notify] 予期しないエラーが発生しました: ${err && err.message ? err.message : err}\n`
+      `[claude-notify] 予期しないエラーが発生しました${safeErrorCodeSuffix(err)}。\n`
     );
   })
   .finally(() => {
