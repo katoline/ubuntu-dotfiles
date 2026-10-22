@@ -17,7 +17,7 @@ jobs:
   verify:
     name: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,7 +41,7 @@ jobs:
         run: nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath
 
       - name: Nix の Node.js を実行して確認
-        run: nix run .#nodejs-security -- --version
+        run: nix run .#nodejs-security -- scripts/check-node-security.mjs
 
       # 事故防止テストはリポジトリが許可された開発ルート配下にある前提で動く。
       - name: テスト用の開発ルートを準備
