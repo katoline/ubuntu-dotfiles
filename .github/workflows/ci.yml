@@ -38,7 +38,16 @@ jobs:
 
       # home-manager switch は実行せず、宣言設定を評価する。
       - name: Nix の設定を評価
-        run: nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath
+        run: |
+          log="$RUNNER_TEMP/nix-eval-error.log"
+          if nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2> "$log"; then
+            cat "$log"
+          else
+            status=$?
+            cat "$log"
+            python3 -c 'import pathlib, sys; text=pathlib.Path(sys.argv[1]).read_text()[-12000:]; print("::error::" + text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))' "$log"
+            exit "$status"
+          fi
 
       - name: Nix の Node.js を実行して確認
         run: nix run .#nodejs-security -- --version
