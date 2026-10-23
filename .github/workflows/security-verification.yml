@@ -1,0 +1,39 @@
+name: Security verification
+on:
+  push:
+    branches: [audit/security-recheck-20261023]
+permissions:
+  contents: read
+  security-events: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read existing alerts without changing them
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python
+        run: |
+          import json, os, urllib.request, urllib.error
+          repository = os.environ["GITHUB_REPOSITORY"]
+          summary = {"repository": repository}
+          for state in ["open", "closed"]:
+              selected = []
+              try:
+                  page = 1
+                  while True:
+                      url = f"https://api.github.com/repos/{repository}/code-scanning/alerts?state={state}&per_page=100&page={page}&ref=refs/heads/main"
+                      request = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+                      with urllib.request.urlopen(request, timeout=30) as response:
+                          data = json.load(response)
+                      for alert in data:
+                          instance = alert.get("most_recent_instance", {})
+                          selected.append({"number": alert.get("number"), "state": alert.get("state"), "rule": alert.get("rule", {}).get("id"), "severity": alert.get("rule", {}).get("security_severity_level"), "path": instance.get("location", {}).get("path"), "commit_sha": instance.get("commit_sha"), "fixed_at": alert.get("fixed_at")})
+                      if len(data) < 100:
+                          break
+                      page += 1
+                  summary[state] = {"accessible": True, "count": len(selected), "alerts": selected}
+              except urllib.error.HTTPError as error:
+                  summary[state] = {"accessible": False, "http_status": error.code}
+          print("::notice title=Code scanning status::" + json.dumps(summary))
