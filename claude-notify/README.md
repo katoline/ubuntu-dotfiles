@@ -4,10 +4,10 @@ Claude Code / Grok CLI の Stop / Notification フックから iPhone へ Web Pu
 
 ## ファイル構成
 
-| ファイル | 役割 |
-|---|---|
-| [`send-push.mjs`](send-push.mjs) | Web Push 送信本体（VAPID署名） |
-| [`package.json`](package.json) | 依存は `web-push` のみ |
+| ファイル                           | 役割                                                                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [`send-push.mjs`](send-push.mjs)   | Web Push 送信本体（VAPID署名）                                                                                       |
+| [`package.json`](package.json)     | 依存は `web-push` のみ                                                                                               |
 | [`pnpm-lock.yaml`](pnpm-lock.yaml) | lock。`node_modules` は gitignore で、`home-manager switch` 時に activation が `pnpm install --frozen-lockfile` する |
 
 ## 設定ファイル
