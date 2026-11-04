@@ -1,0 +1,47 @@
+# c-ares / SQLite を差し替えた Node.js は公式バイナリキャッシュに無く、
+# ソースビルド（上流テスト込み）で 1.5〜2.5 時間かかる。
+# そのため Node の入力が変わったときだけ実行する。必須チェックではない。
+name: Node security
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - scripts/check-node-security.mjs
+      - .github/workflows/node-security.yml
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - scripts/check-node-security.mjs
+      - .github/workflows/node-security.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-security-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  node-security:
+    name: node-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Nix を準備
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Nix の Node.js を実行して確認
+        run: nix run .#nodejs-security -- scripts/check-node-security.mjs
