@@ -36,32 +36,32 @@ g D17 deny 'sudo diskutil eraseDisk JHFS+ X disk2'
 g D18 deny 'dd if=/dev/zero of=/dev/disk2 bs=1m'
 g D19 deny 'sudo rm -rf /'
 echo "# ask"
-g A01 ask 'git reset --hard HEAD~1'
-g A02 ask 'git reset HEAD~1 --hard'
-g A03 ask 'git clean -fd'
-g A04 ask 'git clean -xdf'
-g A05 ask 'git checkout -- .'
-g A06 ask 'git checkout .'
-g A07 ask 'git restore .'
-g A08 ask 'git branch -D feat/x'
-g A09 ask 'git branch --delete --force feat/x'
-g A10 ask 'git stash drop'
-g A11 ask 'git stash clear'
-g A12 ask 'git rebase -i HEAD~3'
-g A13 ask 'git rebase main'
-g A14 ask 'git commit --amend --no-edit'
-g A15 ask 'git filter-branch --all'
-g A16 ask 'git -C /tmp/x reset --hard'
-g A17 ask 'killall node'
-g A18 ask 'pkill -f vite'
-g A19 ask 'chmod -R 777 /usr/local/lib'
-g A20 ask 'sudo chown -R peipou /opt'
-g A25 ask 'git add . && git reset --hard'
-g A26 ask $'ls\ngit clean -fd'
-g A27 ask 'git worktree remove --force ../wt'
-g A28 ask 'git commit --amend'
-g A29 ask $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --amend'
-g A30 ask $'git reset -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --hard'
+g A01 none 'git reset --hard HEAD~1'
+g A02 none 'git reset HEAD~1 --hard'
+g A03 none 'git clean -fd'
+g A04 none 'git clean -xdf'
+g A05 none 'git checkout -- .'
+g A06 none 'git checkout .'
+g A07 none 'git restore .'
+g A08 none 'git branch -D feat/x'
+g A09 none 'git branch --delete --force feat/x'
+g A10 none 'git stash drop'
+g A11 none 'git stash clear'
+g A12 none 'git rebase -i HEAD~3'
+g A13 none 'git rebase main'
+g A14 none 'git commit --amend --no-edit'
+g A15 none 'git filter-branch --all'
+g A16 none 'git -C /tmp/x reset --hard'
+g A17 deny 'killall node'
+g A18 deny 'pkill -f vite'
+g A19 none 'chmod -R 777 /usr/local/lib'
+g A20 none 'sudo chown -R peipou /opt'
+g A25 none 'git add . && git reset --hard'
+g A26 none $'ls\ngit clean -fd'
+g A27 none 'git worktree remove --force ../wt'
+g A28 none 'git commit --amend'
+g A29 none $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --amend'
+g A30 none $'git reset -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --hard'
 echo "# none（素通し）"
 g N01 none 'rm -rf node_modules'
 g N02 none 'rm -rf node_modules/ dist/ .next'
@@ -128,11 +128,11 @@ g R26 deny 'rm foo.txt' "$HOME"
 g R27 deny 'rm -rf dist' "$HOME/Dev"
 g R28 deny 'rm -rf dist' "$HOME/Dev/other"
 g R29 deny 'rm -rf ../../../x'
-g R30 ask  'rm -rf "$SCRATCH/x"'
-g R31 ask  'rm -rf $(pwd)/dist'
-g R32 ask  'cd ~/Dev && rm -rf x'
-g R33 ask  'cd .. && rm -rf dist'
-g R34 ask  'ls | xargs rm -rf'
+g R30 deny 'rm -rf "$SCRATCH/x"'
+g R31 deny 'rm -rf $(pwd)/dist'
+g R32 deny 'cd ~/Dev && rm -rf x'
+g R33 deny 'cd .. && rm -rf dist'
+g R34 deny 'ls | xargs rm -rf'
 g R35 deny 'find ~/Dev -name "*.tmp" -delete'
 g R36 deny 'find / -name core -delete'
 g R37 deny 'rm -rf .'
@@ -144,9 +144,9 @@ g R42 deny 'rm -rf ~/.claude/hooks'
 g R43 deny 'unlink ~/.zshrc'
 g R44 deny 'rm -rf /tmp/other'
 g R45 deny 'bash -c "rm -rf ~"'                   # 文字列の中でも致命対象は deny（プラン Phase 1 段 1）
-g R46 ask  'sh -c "rm -rf dist"'
-g R47 ask  'eval "rm -rf x"'
-g R48 ask  'bash -c "find . -delete"'
+g R46 deny 'sh -c "rm -rf dist"'
+g R47 deny 'eval "rm -rf x"'
+g R48 deny 'bash -c "find . -delete"'
 g R50 none 'rm -f "${TMPDIR:-/tmp}"/claude-pr-mode-test-x'
 g R51 none 'rm -rf "$HOME"/Dev/seino914/x/tmp'
 g R52 none "rm -rf '$HOME/Dev/hobby/app'/dist"
@@ -200,20 +200,20 @@ g D44 none 'curl -s https://example.com/x.json | jq .'
 g D45 none 'bash -c "$(cat local.sh)"'
 g D46 deny 'diskutil apfs deleteContainer disk2'
 g D47 none 'diskutil list'
-echo "#   git の全変更破棄の別形（ask）と、進行操作・index 操作（none）"
-g A31 ask 'git checkout HEAD -- .'
-g A32 ask 'git checkout main -- .'
-g A33 ask 'git checkout -f main'
-g A34 ask 'git checkout --force main'
-g A35 ask 'git switch -f main'
-g A36 ask 'git switch --discard-changes main'
-g A37 ask 'git restore --source=HEAD~1 .'
-g A38 ask 'git restore -W .'
-g A39 ask 'git restore --worktree --staged .'
-g A3A ask 'git restore -SW .'
-g A3B ask 'kill -9 -1'
-g A3C ask 'kill -KILL -1'
-g A3D ask "git worktree remove -f $IN/wt"
+echo "#   git の全変更破棄の別形（none）と、進行操作・index 操作（none）"
+g A31 none 'git checkout HEAD -- .'
+g A32 none 'git checkout main -- .'
+g A33 none 'git checkout -f main'
+g A34 none 'git checkout --force main'
+g A35 none 'git switch -f main'
+g A36 none 'git switch --discard-changes main'
+g A37 none 'git restore --source=HEAD~1 .'
+g A38 none 'git restore -W .'
+g A39 none 'git restore --worktree --staged .'
+g A3A none 'git restore -SW .'
+g A3B deny 'kill -9 -1'
+g A3C deny 'kill -KILL -1'
+g A3D none "git worktree remove -f $IN/wt"
 g N40 none 'git restore --staged .'
 g N41 none 'git restore -S .'
 g N42 none 'git rebase --continue'
@@ -232,9 +232,9 @@ g N52 none 'npm rm lodash'
 g N53 none 'pytest tests/eval && rm -rf .pytest_cache'
 g N54 none 'npm run evaluate; rm -rf dist'
 g N55 none 'python eval.py && rm -rf build'
-g R56 ask  'eval "rm -rf dist"'
-g R57 ask  'zsh -c "rm -rf dist"'
-g R58 ask  '/bin/sh -lc "rm -rf dist"'
+g R56 deny 'eval "rm -rf dist"'
+g R57 deny 'zsh -c "rm -rf dist"'
+g R58 deny '/bin/sh -lc "rm -rf dist"'
 echo "#   行継続・改行またぎの演算子"
 g L01 deny $'rm -rf \\\n  ~/.claude'
 g L02 deny $'rm -rf \\\n  /'
@@ -251,8 +251,8 @@ g L12 none $'cat <<EOF\r\nrm -rf ~\r\nEOF\r\n'
 echo "#   別表記の rm と ~user"
 g L20 deny '\rm -rf ~'
 g L21 deny '/bin/rm -rf ~/Dev/other'
-g L22 ask  'rm -rf ~peipou/Dev/other'
-g L23 ask  'rm -rf ~-/x'
+g L22 deny 'rm -rf ~peipou/Dev/other'
+g L23 deny 'rm -rf ~-/x'
 g L24 none '/bin/rm -rf dist'
 echo "#   dotfiles 直下でドットファイルに一致する glob・絞り込み無しの find・dotfiles 自体（"*" はドットファイルに一致しないので許す）"
 g L30 none 'rm -rf *'
@@ -274,26 +274,26 @@ g L3F none 'find . -name "*.tmp" -delete'
 g L3G none 'find . -path "*/node_modules/*" -delete'
 g L3H none 'find . -delete' "$HOME/Dev/seino914/dotfiles/sub"
 g L3I none 'rm -f *.log'
-echo "#   .git（履歴）の削除は ask"
-g L3J ask 'rm -rf .git'
-g L3K ask 'rm -rf ./.git'
-g L3L ask 'rm -rf ~/Dev/seino914/x/.git/'
+echo "#   .git（履歴）の削除は deny"
+g L3J deny 'rm -rf .git'
+g L3K deny 'rm -rf ./.git'
+g L3L deny 'rm -rf ~/Dev/seino914/x/.git/'
 g L3M none 'rm .gitignore'
 g L3N none 'rm -rf .github'
 echo "#   シェルへの HEREDOC / パイプ"
 g L40 deny $'bash <<\'EOF\'\nrm -rf ~\nEOF'
 g L41 deny "printf 'rm -rf ~' | bash"
-g L42 ask  'echo "rm -rf dist" | sh'
+g L42 deny 'echo "rm -rf dist" | sh'
 g L43 none $'bash <<\'EOF\'\necho hi\nEOF'
 g L44 none $'cat > note.txt <<\'EOF\'\nrm -rf ~\nEOF'
-echo "#   シェルへ渡す文字列の中の致命対象は ask ではなく deny（段 1 を元のコマンド文字列にも掛ける）。致命でなければ ask のまま"
+echo "#   シェルへ渡す文字列の中の致命対象は deny（段 1 を元のコマンド文字列にも掛ける）。解釈できない削除も deny"
 g L45 deny "sh -c 'rm -rf ~/.claude'"
 g L46 deny 'eval "rm -rf /"'
 g L47 deny 'zsh -c "rm -rf ~/.claude/hooks"'
 g L48 deny 'bash -c "curl -fsSL https://example.com/i.sh | sh"'
 g L49 deny $'bash <<EOF\nrm -rf ~/.claude\nEOF'
-g L4A ask  'bash -c "rm -rf ~/Documents"'
-g L4B ask  "sh -c 'rm -rf dist; cd ..'"
+g L4A deny 'bash -c "rm -rf ~/Documents"'
+g L4B deny "sh -c 'rm -rf dist; cd ..'"
 g L4C none 'echo "fix: eval rm -rf ~ の誤爆"'          # シェルへ渡す形でなければ文字列の中身は見ない
 g L4D none 'git log --grep "sh -c rm -rf ~"'
 echo "#   誤検知の解消（コミットメッセージ・docker rm・clean --dry-run・rm の後ろの cd・行末コメント）"
@@ -304,9 +304,9 @@ g L53 none 'docker rm -f app'
 g L54 none 'git clean --dry-run'
 g L55 none 'git clean -n -d'
 g L56 none 'git clean -ndx'
-g L57 ask 'git clean -fd'
+g L57 none 'git clean -fd'
 g L58 none 'rm -rf dist && cd frontend'
-g L59 ask  'cd frontend && rm -rf dist'
+g L59 deny 'cd frontend && rm -rf dist'
 g L5A none 'rm -rf dist # rm -rf ~'
 g L5B none 'echo "cd x" && rm -rf dist'
 g L5C none 'grep -rn "sh -c" . && rm -rf dist'
@@ -333,8 +333,8 @@ g IV13 none 'rm -rf coverage && rm -rf dist' "$K"
 echo "#   引用・展開まわり（ブレース展開・\$'…'・バッククォート・展開される HEREDOC・dot-glob）"
 g L60 deny "rm -rf $HOME/Dev/seino914/{../../.claude/hooks,tmpx}"   # {a,b} は展開して判定する（../.. で許可ルートの外へ出る要素を捕まえる）
 g L61 deny 'rm -rf $HOME/Dev/seino914/dotfiles/{.claude,dist}'
-g L62 ask  'rm -rf {1..3}'                                          # 範囲形は展開後を特定できない
-g L62b ask  'rm -rf {a,{b,c}}'                                      # 入れ子も同様
+g L62 deny 'rm -rf {1..3}'                                          # 範囲形は展開後を特定できない
+g L62b deny 'rm -rf {a,{b,c}}'                                      # 入れ子も同様
 g L62c deny 'rm -rf {dist,../../../Documents}'                      # 展開後の一部が許可ルートの外
 g L63 deny "echo \$'a\\'b' ; rm -rf \$HOME/.claude/hooks"           # \$'…' の中の \' は閉じ引用符ではない（後ろの rm を見失わない）
 g L64 deny 'git commit -m "`rm -rf $HOME/.claude/hooks`"'           # 二重引用符の中のバッククォート置換は実際に実行される
@@ -344,26 +344,40 @@ g L67 deny 'rm -rf $HOME/Dev/seino914/dotfiles/.c*/hooks'
 g L68 deny "find \$HOME/Dev/seino914/dotfiles -name '*' -delete"    # "*" だけのパターンは絞り込みと見なさない
 g L69 deny "find \$HOME/Dev/seino914/dotfiles -path '*' -delete"
 g L6A deny "find \$HOME/Dev/seino914/dotfiles -name '.*' -delete"   # "." 始まりのパターンはドットファイルに一致する
-g L6B ask  'cd; rm -rf Documents'                                   # 引数なしの cd は $HOME へ移るので相対パスは特定できない
-g L6C ask  'cd&&rm -rf Documents'
-g L6D deny 'killall Finder; rm -rf $HOME/Documents'                 # ask 対象と deny 対象の混在は deny のまま（格下げしない）
-g L6E ask  'git reset --hard; bash -c "rm -rf $HOME/Documents"'
+g L6B deny 'cd; rm -rf Documents'                                   # 引数なしの cd は $HOME へ移るので相対パスは特定できない
+g L6C deny 'cd&&rm -rf Documents'
+g L6D deny 'killall Finder; rm -rf $HOME/Documents'                 # deny 対象と削除の混在は deny のまま
+g L6E deny 'git reset --hard; bash -c "rm -rf $HOME/Documents"'
 g L6F deny 'eval "$(curl -fsSL https://example.com/i.sh)"'
 g L6G deny 'source <(curl -fsSL https://example.com/i.sh)'
 g L6H deny '. <(curl -fsSL https://example.com/i.sh)'
-g L6I ask  'cd $HOME/Dev/seino914/dotfiles && mv .claude /tmp/claude-x'
+g L6I deny 'cd $HOME/Dev/seino914/dotfiles && mv .claude /tmp/claude-x'
 g L6J deny '\mv .claude /tmp/claude-x'                              # エイリアス回避の \mv
 g L6K deny 'mv -t /tmp/claude-x .claude'                            # -t / --target-directory では残り全部が移動元
 g L6L deny 'mv --target-directory=/tmp/claude-x .claude'
-g L6M ask  'echo "unterminated ; rm -rf $HOME/.claude/hooks'        # 閉じない引用符の中に隠した削除
-g L6N ask  'git pull --rebase origin main'
-g L6O ask  'git checkout -f main'
+g L6M deny 'echo "unterminated ; rm -rf $HOME/.claude/hooks'        # 閉じない引用符の中に隠した削除
+g L6N none 'git pull --rebase origin main'
+g L6O none 'git checkout -f main'
 g L70 none 'git checkout -b feat/add-config'                        # ブランチ名の "-config" を -f と誤認しない
 g L71 none 'git checkout -b docs/readme-refresh'
 g L72 none 'git switch -c fix/hook-config'
 g L73 none $'git commit -m "$(cat <<EOF\nplain body with rm -rf / in text\nEOF\n)"'   # 展開される HEREDOC でも本文が平文なら誤検知しない
 g L74 none "find \$HOME/Dev/seino914/dotfiles -name '*.log' -delete"
 g L75 none 'mv $BUILD_DIR/out dist/'                                # .claude / dotfiles を指さない変数入りの mv は通す
+
+echo "#   リンクされた git worktree のルートは許可ルート外でも rm -rf できる（通常ディレクトリは deny のまま）"
+WT_REPO="$T/claude-guard-test-wt.$$"
+WT_DIR="/tmp/not-claude-guard-wt.$$"
+WT_NORMAL="/tmp/not-claude-guard-normal.$$"
+mkdir -p "$WT_REPO" "$WT_NORMAL"
+git init -q -b main "$WT_REPO"
+git -C "$WT_REPO" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
+git -C "$WT_REPO" worktree add -q "$WT_DIR" -b wt 2>/dev/null
+g W01-worktree-root none "rm -rf $WT_DIR" "$WT_REPO"
+g W02-normal-dir deny "rm -rf $WT_NORMAL" "$WT_REPO"
+g W03-worktree-remove-force none "git worktree remove --force $WT_DIR" "$WT_REPO"
+rm -rf "$WT_REPO" "$WT_DIR" "$WT_NORMAL"
+
 echo "#   一時領域の許可は TMPDIR に依存する（未設定なら /tmp 全体を許可領域にしない）"
 genv L80 deny 'rm -rf /tmp/important-data' -u TMPDIR
 genv L81 none 'rm -rf /tmp/important-data' TMPDIR=/tmp
@@ -385,41 +399,41 @@ g V20 deny 'D=~/Documents && rm -rf "$D"'                             # 解決�
 g V21 deny 'D=~ && rm -rf $D'
 g V22 deny 'D=/tmp/claude-x/../../home/u; rm -rf $D'
 g V23 deny 'D=~/.claude; mv $D /tmp/x'
-g V24 ask  'D=build && cd sub && rm -rf $D'                           # cd を挟む相対パスは既存の ?cd
-g V30 ask  'D=/tmp/claude-x; if true; then D=~; fi; rm -rf "$D"'      # 制御構文の中の代入
-g V31 ask  'for d in a b; do rm -rf "$d"; done'
-g V32 ask  'rm -rf "$D"; D=/tmp/claude-x'                            # 削除より後の代入
-g V33 ask  'rm -rf $D; D=/tmp/claude-x; rm -rf $D'                    # 同じ文面の削除が前後にあっても後ろの代入を前に使わない
-g V34 ask  'D=~; rm -rf $D; D=/tmp/claude-x; rm -rf $D'               # 複数の代入
-g V35 ask  'cd x && D=/tmp/claude-x; rm -rf $D'                       # && の後の代入のあとに ; で削除（代入が実行されたか決まらない）
-g V36 ask  'cd x || D=/tmp/claude-x; rm -rf $D'
-g V37 ask  'D=/tmp/claude-x | rm -rf $D'
-g V38 ask  'D=/tmp/claude-x rm -rf $D'                                # 環境代入は $D の展開に効かない
-g V39 ask  'D=/tmp/claude-x; read D; rm -rf $D'
-g V3A ask  'D=/tmp/claude-x; export D=~ E=1; rm -rf $D'
-g V3B ask  'D=/tmp/claude-x; rm -rf ${D:-/}'                          # パラメータ展開
-g V3C ask  'S=/tmp/claude-x; S+=/../../../home; rm -rf $S'
-g V3D ask  'S=$(mktemp -d) && f() { S=~; }; f; rm -rf $S'
-g V3E ask  'S=/tmp/claude-x; (S=~); rm -rf $S'
-g V3F ask  'D=/tmp/claude-x; eval "D=~"; rm -rf $D'
-g V3G ask  'D="/tmp/claude-x/a b"; rm -rf $D'                         # 空白を含む値は分割されうるので解決しない
-g V3H ask  'D="~/x"; rm -rf "$D"'                                     # 引用符の中の ~ は展開されない
-g V3I ask  'X=/tmp/claude-x; while true; do rm -rf $X; X=~; done'
-g V3J ask  'D=$(pwd)/dist; rm -rf $D'                                 # mktemp 以外のコマンド置換
-g V3K ask  'T=$(mktemp -d foo.XXXX); rm -rf $T'                       # テンプレートだけの mktemp は作業ディレクトリに作る
-g V3L ask  'T=$(mktemp -d -p ~/Documents); rm -rf $T'                 # -p の先が一時領域でない
-g V3M ask  'TMPDIR=~; T=$(mktemp -d); rm -rf $T'                      # TMPDIR 自体の書き換え
-g V3N ask  'D=/tmp/claude-x; rm -rf $DX/a'                            # 名前の一部だけ一致する変数は別物
-genv V3O ask 'T=$(mktemp -d); rm -rf $T' -u TMPDIR                   # TMPDIR 未設定の mktemp は作成先が決まらない
+g V24 deny 'D=build && cd sub && rm -rf $D'                           # cd を挟む相対パスは既存の ?cd
+g V30 deny 'D=/tmp/claude-x; if true; then D=~; fi; rm -rf "$D"'      # 制御構文の中の代入
+g V31 deny 'for d in a b; do rm -rf "$d"; done'
+g V32 deny 'rm -rf "$D"; D=/tmp/claude-x'                            # 削除より後の代入
+g V33 deny 'rm -rf $D; D=/tmp/claude-x; rm -rf $D'                    # 同じ文面の削除が前後にあっても後ろの代入を前に使わない
+g V34 deny 'D=~; rm -rf $D; D=/tmp/claude-x; rm -rf $D'               # 複数の代入
+g V35 deny 'cd x && D=/tmp/claude-x; rm -rf $D'                       # && の後の代入のあとに ; で削除（代入が実行されたか決まらない）
+g V36 deny 'cd x || D=/tmp/claude-x; rm -rf $D'
+g V37 deny 'D=/tmp/claude-x | rm -rf $D'
+g V38 deny 'D=/tmp/claude-x rm -rf $D'                                # 環境代入は $D の展開に効かない
+g V39 deny 'D=/tmp/claude-x; read D; rm -rf $D'
+g V3A deny 'D=/tmp/claude-x; export D=~ E=1; rm -rf $D'
+g V3B deny 'D=/tmp/claude-x; rm -rf ${D:-/}'                          # パラメータ展開
+g V3C deny 'S=/tmp/claude-x; S+=/../../../home; rm -rf $S'
+g V3D deny 'S=$(mktemp -d) && f() { S=~; }; f; rm -rf $S'
+g V3E deny 'S=/tmp/claude-x; (S=~); rm -rf $S'
+g V3F deny 'D=/tmp/claude-x; eval "D=~"; rm -rf $D'
+g V3G deny 'D="/tmp/claude-x/a b"; rm -rf $D'                         # 空白を含む値は分割されうるので解決しない
+g V3H deny 'D="~/x"; rm -rf "$D"'                                     # 引用符の中の ~ は展開されない
+g V3I deny 'X=/tmp/claude-x; while true; do rm -rf $X; X=~; done'
+g V3J deny 'D=$(pwd)/dist; rm -rf $D'                                 # mktemp 以外のコマンド置換
+g V3K deny 'T=$(mktemp -d foo.XXXX); rm -rf $T'                       # テンプレートだけの mktemp は作業ディレクトリに作る
+g V3L deny 'T=$(mktemp -d -p ~/Documents); rm -rf $T'                 # -p の先が一時領域でない
+g V3M deny 'TMPDIR=~; T=$(mktemp -d); rm -rf $T'                      # TMPDIR 自体の書き換え
+g V3N deny 'D=/tmp/claude-x; rm -rf $DX/a'                            # 名前の一部だけ一致する変数は別物
+genv V3O deny 'T=$(mktemp -d); rm -rf $T' -u TMPDIR                   # TMPDIR 未設定の mktemp は作成先が決まらない
 echo "#   変数名が代入以外の形（環境代入付きの read・printf -v・for・関数の中の削除）でも現れたら解決しない"
-g V40 ask  'TARGET=/tmp/claude-1000/default; [ -f cfg ] && IFS= read -r TARGET < cfg; rm -rf "$TARGET"'
-g V41 ask  'OUT=/tmp/claude-1000/out; LC_ALL=C read -r OUT < out.txt && rm -rf "$OUT"'
-g V42 ask  'D=/tmp/claude-x; LC_ALL=C printf -v D %s ~; rm -rf "$D"'
-g V43 ask  'D=/tmp/claude-x; clean() { rm -rf "$D"; }; for D in ~/Documents ~/Pictures; do clean; done'
-g V44 ask  'D=/tmp/claude-x; clean() { rm -rf "$D"; }; while read -r D; do clean; done < list.txt'
-g V45 ask  'D=/tmp/claude-x; clean() { rm -rf "$D"; }; read -r D; clean'
-g V46 ask  'D=/tmp/claude-x && { rm -rf $D; }'                         # { で始まる文の中の削除も解決しない
-g V47 ask  'D=/tmp/claude-x; function clean { rm -rf "$D"; }; clean'
+g V40 deny 'TARGET=/tmp/claude-1000/default; [ -f cfg ] && IFS= read -r TARGET < cfg; rm -rf "$TARGET"'
+g V41 deny 'OUT=/tmp/claude-1000/out; LC_ALL=C read -r OUT < out.txt && rm -rf "$OUT"'
+g V42 deny 'D=/tmp/claude-x; LC_ALL=C printf -v D %s ~; rm -rf "$D"'
+g V43 deny 'D=/tmp/claude-x; clean() { rm -rf "$D"; }; for D in ~/Documents ~/Pictures; do clean; done'
+g V44 deny 'D=/tmp/claude-x; clean() { rm -rf "$D"; }; while read -r D; do clean; done < list.txt'
+g V45 deny 'D=/tmp/claude-x; clean() { rm -rf "$D"; }; read -r D; clean'
+g V46 deny 'D=/tmp/claude-x && { rm -rf $D; }'                         # { で始まる文の中の削除も解決しない
+g V47 deny 'D=/tmp/claude-x; function clean { rm -rf "$D"; }; clean'
 echo "#   kill の直接引数と、置換の中で実行される別コマンドを区別する"
 g K01 none 'kill $(head -1 /tmp/claude-1000/x/postmaster.pid)'
 g K02 none 'kill "$(head -1 /tmp/claude-1000/x/postmaster.pid)"'
@@ -427,17 +441,17 @@ g K03 none 'kill `head -1 /tmp/claude-1000/x/postmaster.pid`'
 g K04 none 'kill 12345'
 g K05 none 'kill $(lsof -ti :3000)'
 g K06 none 'kill -9 $(head -1 /tmp/claude-1000/x/postmaster.pid)'
-g K07 ask  'kill -1'
-g K08 ask  'kill -9 -1'
-g K09 ask  'kill -KILL -1'
-g K10 ask  'kill $(lsof -ti :3000) -1'
-g K11 ask  'echo "$(kill -9 -1)"'
-g K12 ask  'kill $(kill -9 -1)'
+g K07 deny 'kill -1'
+g K08 deny 'kill -9 -1'
+g K09 deny 'kill -KILL -1'
+g K10 deny 'kill $(lsof -ti :3000) -1'
+g K11 deny 'echo "$(kill -9 -1)"'
+g K12 deny 'kill $(kill -9 -1)'
 g K13 none 'echo "kill -9 -1"'
 g K14 none 'kill -1 12345'
-g K15 ask  'kill -9 "-1"'
-g K16 ask  'kill "-1"'
-g K17 ask  'echo `kill -9 -1`'
+g K15 deny 'kill -9 "-1"'
+g K16 deny 'kill "-1"'
+g K17 deny 'echo `kill -9 -1`'
 echo "#   削除前の絶対パスへの cd は、成功が確定する && の直線だけを追う"
 g C01 none 'cd /tmp/claude-1000/x && rm -rf node_modules'
 g C02 none 'cd "/tmp/claude-1000/x" && rm -rf node_modules'
@@ -449,60 +463,60 @@ g C07 none 'cd /tmp/claude-1000/x && rmdir build'
 g C08 none 'cd /tmp/claude-1000/x && unlink build.tmp'
 g C09 none 'cd /tmp/claude-1000/x && find build -name "*.tmp" -delete'
 g C10 none 'cd /tmp/claude-1000/x && cd /tmp/claude-1000/y && rm -rf build'
-g C11 ask  'cd /tmp/claude-1000/x; rm -rf build'                       # cd が失敗した場合も削除が実行される
-g C12 ask  'if true; then cd /tmp/claude-1000/x; fi; rm -rf build'
-g C13 ask  '(cd /tmp/claude-1000/x); rm -rf build'
-g C14 ask  'false || cd /tmp/claude-1000/x && rm -rf build'
-g C15 ask  'cd - && rm -rf build'
-g C16 ask  'cd && rm -rf build'
-g C17 ask  'cd $UNKNOWN && rm -rf build'
-g C18 ask  'cd sub && rm -rf build'
-g C19 ask  'cd ~/Dev/kaishi/app && rm -rf build'                      # ~ と相対 cd は追跡の対象外
+g C11 deny 'cd /tmp/claude-1000/x; rm -rf build'                       # cd が失敗した場合も削除が実行される
+g C12 deny 'if true; then cd /tmp/claude-1000/x; fi; rm -rf build'
+g C13 deny '(cd /tmp/claude-1000/x); rm -rf build'
+g C14 deny 'false || cd /tmp/claude-1000/x && rm -rf build'
+g C15 deny 'cd - && rm -rf build'
+g C16 deny 'cd && rm -rf build'
+g C17 deny 'cd $UNKNOWN && rm -rf build'
+g C18 deny 'cd sub && rm -rf build'
+g C19 deny 'cd ~/Dev/kaishi/app && rm -rf build'                      # ~ と相対 cd は追跡の対象外
 g C20 deny 'cd $HOME/Documents && rm -rf build'
 g C21 deny 'cd /tmp/claude-1000/x && rm -rf .'
 g C22 deny 'cd /tmp/claude-1000/x && rm -rf ..'
 g C23 deny "cd /tmp/claude-1000/x && rm -rf $IN"                     # 元の cwd 自身も引き続き保護する
-g C24 ask  'cd $D && D=/tmp/claude-1000/x && rm -rf build'             # cd より後の代入は使わない
-g C25 ask  'D="~/orca/workspaces/x/y"; cd "$D" && rm -rf build'
-g C26 ask  'D=/tmp/claude-1000/x; read D; cd "$D" && rm -rf build'
-g C27 ask  'cd /tmp/claude-1000/x | cat; rm -rf build'
-g C28 ask  'cd /tmp/claude-1000/x & rm -rf build'
-g C29 ask  'HOME=/etc; cd $HOME/Dev/hobby/app && rm -rf build'
-g C30 ask  'TMPDIR=/etc; cd $TMPDIR/work && rm -rf build'
-g C31 ask  'cd /tmp/claude-1000/x && command cd $HOME/Documents && rm -rf build'
-g C32 ask  'cd /tmp/claude-1000/x && builtin cd $HOME/Documents && rm -rf build'
-g C33 ask  'cd /tmp/claude-1000/* && rm -rf build'
-g C34 ask  'cd "$(mktemp -d)" && rm -rf build'
-g C35 ask  'read HOME; cd $HOME/Dev/hobby/app && rm -rf build'
-g C36 ask  'read TMPDIR; cd $TMPDIR/work && rm -rf build'
-g C37 ask  'D=/tmp/claude-1000/*; cd "$D" && rm -rf build'
+g C24 deny 'cd $D && D=/tmp/claude-1000/x && rm -rf build'             # cd より後の代入は使わない
+g C25 deny 'D="~/orca/workspaces/x/y"; cd "$D" && rm -rf build'
+g C26 deny 'D=/tmp/claude-1000/x; read D; cd "$D" && rm -rf build'
+g C27 deny 'cd /tmp/claude-1000/x | cat; rm -rf build'
+g C28 deny 'cd /tmp/claude-1000/x & rm -rf build'
+g C29 deny 'HOME=/etc; cd $HOME/Dev/hobby/app && rm -rf build'
+g C30 deny 'TMPDIR=/etc; cd $TMPDIR/work && rm -rf build'
+g C31 deny 'cd /tmp/claude-1000/x && command cd $HOME/Documents && rm -rf build'
+g C32 deny 'cd /tmp/claude-1000/x && builtin cd $HOME/Documents && rm -rf build'
+g C33 deny 'cd /tmp/claude-1000/* && rm -rf build'
+g C34 deny 'cd "$(mktemp -d)" && rm -rf build'
+g C35 deny 'read HOME; cd $HOME/Dev/hobby/app && rm -rf build'
+g C36 deny 'read TMPDIR; cd $TMPDIR/work && rm -rf build'
+g C37 deny 'D=/tmp/claude-1000/*; cd "$D" && rm -rf build'
 g C38 none 'cd /tmp/claude-1000/x && rm -rf /tmp/claude-1000/x'
 g C39 none 'cd /tmp/claude-1000/x/sub && make && rm -rf /tmp/claude-1000/x'
 g C40 none 'T=/tmp/claude-1000/x; cd "$T" && git status && rm -rf "$T"'
 g C41 deny 'cd /home/peipou && rm -rf /home/peipou'
-echo "#   無害な sh -c の外の削除は範囲判定し、シェル文字列の対象や未知の展開は確認する"
+echo "#   無害な sh -c の外の削除は範囲判定し、シェル文字列の対象や未知の展開は deny"
 g S01 none 'rm -rf /tmp/claude-1000/x/out && nix develop -c sh -c "pnpm install"'
 g S02 none "rm -rf /tmp/claude-1000/x/out && bash -c 'pnpm install'"
 g S03 none 'rm -rf /tmp/claude-1000/x/out && sh -lc "pnpm install"'
 g S04 none 'rm -rf /tmp/claude-1000/x/out && sh -c "pnpm install" && bash -c "pwd"'
 g S05 deny 'rm -rf $HOME/Documents && sh -c "pnpm install"'
-g S06 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "rm -rf build"'
-g S07 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "/bin/rm -rf /tmp/claude-1000/x/in"'
-g S08 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "\rm -rf /tmp/claude-1000/x/in"'
-g S09 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "/usr/bin/find /tmp/claude-1000/x/in -delete"'
-g S10 ask  "rm -rf /tmp/claude-1000/x/out && sh -c '\$OP'"
-g S11 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "$OP"'
-g S12 ask  "rm -rf /tmp/claude-1000/x/out && sh -c '\`cat commands\`'"
-g S13 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "pnpm install'
+g S06 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "rm -rf build"'
+g S07 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "/bin/rm -rf /tmp/claude-1000/x/in"'
+g S08 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "\rm -rf /tmp/claude-1000/x/in"'
+g S09 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "/usr/bin/find /tmp/claude-1000/x/in -delete"'
+g S10 deny "rm -rf /tmp/claude-1000/x/out && sh -c '\$OP'"
+g S11 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "$OP"'
+g S12 deny "rm -rf /tmp/claude-1000/x/out && sh -c '\`cat commands\`'"
+g S13 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "pnpm install'
 g S14 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "rm -rf ~"'
-g S15 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "git reset --hard"'
-g S16 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "kill -9 -1"'
-g S17 ask  'rm -rf /tmp/claude-1000/x/out && sh -c "pnpm install" && sh -c "rm -rf build"'
+g S15 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "git reset --hard"'
+g S16 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "kill -9 -1"'
+g S17 deny 'rm -rf /tmp/claude-1000/x/out && sh -c "pnpm install" && sh -c "rm -rf build"'
 g S18 none 'S=/tmp/claude-1000/x; rm -rf $S/out && sh -c "pnpm install"'
 echo "#   再現の変数パスを解決し、引用符内の ~ は展開しない"
 g V48 none 'S=/tmp/claude-1000/x/scratchpad; rm -rf $S/AppHost2/bin'
-g V49 ask  'D="~/orca/workspaces/x/y"; rm -rf $D/src/obj'
-g V4A ask  "D='~/orca/workspaces/x/y'; rm -rf \$D/src/obj"
+g V49 deny 'D="~/orca/workspaces/x/y"; rm -rf $D/src/obj'
+g V4A deny "D='~/orca/workspaces/x/y'; rm -rf \$D/src/obj"
 g V4B none 'D=~/orca/workspaces/x/y; rm -rf $D/src/obj'
 echo "#   .claude/dev-roots の各ルート: 配下の削除は確認なし、ルート自身は deny（許可ルートの定義はこのファイルだけ）"
 ROOTS_FILE="$(dirname "$(readlink -f "$HOOK" 2>/dev/null || printf '%s' "$HOOK")")/../dev-roots"
@@ -528,12 +542,18 @@ gc DC3-abs-line-ignored deny 'rm -rf /Volumes/abs/x'
 gc DC4-bare-tilde-ignored deny "rm -rf $HOME/Documents/x"
 rm -rf "$TMPH"
 
-echo "#   ask / deny の理由文は「何をするコマンドか」で始まる（docs/harness-plan の原則 4。説明を変えたらここも変える）"
+echo "#   deny の理由文は「何をするコマンドか」で始まる（docs/harness-plan の原則 4。説明を変えたらここも変える）"
 gr() { # label 期待する先頭文字列 cmd [cwd]
   local out reason
   out=$(run_hook "$HOOK" PreToolUse test-guard "$3" "" "" "${4:-$IN}")
   reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
   case "$reason" in "$2"*) report "$1" ok ok "$3" ;; *) report "$1" "$2…" "${reason:-(出力なし)}" "$3" ;; esac
+}
+# 確認なし（無出力）で通す git 操作・chmod は、理由文ではなく無出力であることを固定する
+gnone() { # label cmd [cwd]
+  local out
+  out=$(run_hook "$HOOK" PreToolUse test-guard "$2" "" "" "${3:-$IN}")
+  report "$1" none "$(decision_of "$out")" "$2"
 }
 gr X01 'cd した先を基準に' 'cd .. && rm -rf dist'
 gr X02 '変数を含む' 'rm -rf "$SCRATCH/x"'
@@ -544,16 +564,25 @@ gr X06 '前のコマンドの出力を xargs' 'ls | xargs rm -rf'
 gr X07 '文字列をシェルに渡して実行し' 'sh -c "rm -rf dist"'
 gr X08 '引用符または HEREDOC が閉じておらず' 'echo "unterminated ; rm -rf dist'
 gr X09 'cd した先を基準に' "cd $HOME/Dev/seino914/dotfiles && mv .claude /tmp/claude-x"
-gr X10 'git reset --hard' 'git reset --hard HEAD~1'
-gr X11 'git clean:' 'git clean -fd'
-gr X12 'git pull --rebase' 'git pull --rebase origin main'
-gr X13 'git branch -D' 'git branch -D feat/x'
-gr X14 'git commit --amend' 'git commit --amend'
-gr X15 'git restore .' 'git restore .'
+gnone X10 'git reset --hard HEAD~1'
+gnone X11 'git clean -fd'
+gnone X12 'git pull --rebase origin main'
+gnone X13 'git branch -D feat/x'
+gnone X14 'git commit --amend'
+gnone X15 'git restore .'
 gr X16 'killall / pkill' 'killall node'
-gr X17 'chmod / chown -R' 'chmod -R 777 /usr/local/lib'
-gr X18 'rm …/.git' 'rm -rf .git'
+gnone X17 'chmod -R 777 /usr/local/lib'
+gr X18 'リポジトリの履歴（.git）' 'rm -rf .git'
 gr X19 '削除は ~/Dev/kaishi・~/Dev/seino914・~/Dev/hobby・~/orca/workspaces と一時領域' 'rm -rf ~/Dev/x'
+# 対象を書き直すよう促す一文と、一括 kill の代替手段が理由文に入る
+out=$(run_hook "$HOOK" PreToolUse test-guard 'rm -rf "$SCRATCH/x"' "" "" "$IN")
+case "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')" in
+  *'対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）'*) v=ok ;; *) v=missing ;; esac
+report X20-unresolved-rewrite ok "$v" ""
+out=$(run_hook "$HOOK" PreToolUse test-guard 'killall node' "" "" "$IN")
+case "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')" in
+  *'PID 指定の kill か kill $(lsof -ti :<ポート>)'*) v=ok ;; *) v=missing ;; esac
+report X21-kill-guidance ok "$v" ""
 
 echo "#   deny の理由文が途中で切れない（UTF-8 ロケールでの \"\$r）\" の退行検出）"
 out=$(payload PreToolUse test-guard "rm $HOME/Downloads/x.zip" "" "" "$IN" | bash "$HOOK" 2>"$ERRF")

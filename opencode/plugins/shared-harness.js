@@ -4,8 +4,9 @@
 // Git の許可判定は /pr の起動状態に依存しない:
 // - permission 評価では共通 guard と pr-mode の PreToolUse（pr-pre）を呼び、deny / ask をそのまま反映する。
 //   guard も pr-pre も決定を返さず、フル入力の単一コマンド・メインセッション・設定が ask のときだけ
-//   pr-mode の PermissionRequest（pr-request）を呼び、allow が返ればそれを反映する
-//   （既定ブランチ以外の commit / push / PR 作成・更新が確認なしで通る）。
+//   pr-mode の PermissionRequest（pr-request）を `PR_MODE_REQUEST_SCOPE=git` で呼び、
+//   allow が返ればそれを反映する。allow されるのは main 時点と同じ git の自動承認対象だけで、
+//   `home-manager switch`・`apt install`・`git reset --hard` 等の設定 ask は残る。
 // - サブエージェントと delegated-worker は agent_id 付きで渡し、pr-pre に git 書き込みを拒否させる。
 // - session ごとの「世代 (generation)」と「最新の実配送 user」は検証ゲートの再開制御だけに使う。
 //   execution.started / failed / interrupted と実 user の変更は generation を進め、進行中の検証ジョブ
@@ -382,7 +383,14 @@ export default {
       // /pr の起動状態は問わない。フル入力を特定できたメインセッションの単一コマンドだけを
       // 対象にする（resources の断片評価で、無関係な static ask まで allow に上げない）。
       // 設定の allow はそのまま、deny / ask はここへ来ない。
-      if (full && commands.length === 1 && !child && event.effect === "ask" && !anyAsk) {
+      if (
+        full &&
+        commands.length === 1 &&
+        !child &&
+        event.effect === "ask" &&
+        !anyAsk &&
+        isSingleSimpleCommand(commands[0].command)
+      ) {
         const result = parseRequestAllow(
           await runAdapter("pr-request", {
             session_id: namespace(event.sessionID),

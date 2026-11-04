@@ -43,19 +43,19 @@ gpre G19-camel-tool none "$S_OFF" 'git commit -m x'
 gpre G20-protected-commit deny "$S_ON" 'git commit -m x' "$GIT_MAIN"
 gpre G21-protected-push deny "$S_ON" 'git push origin main' "$GIT_MAIN"
 gpre G22-merge ask "$S_ON" 'gh pr merge 1'
-gpre G23-vars ask "$S_ON" 'git push origin "$BRANCH"'
+gpre G23-vars deny "$S_ON" 'git push origin "$BRANCH"'
 out=$(jq -cn --arg s "$S_ON" --arg d "$GIT_FEAT" '{hookEventName:"pre_tool_use",sessionId:$s,cwd:$d,agentId:"child",toolName:"run_terminal_command",toolInput:{command:"git commit -m x"}}' \
   | GROK_HOOK_EVENT=pre_tool_use GROK_SESSION_ID="$S_ON" bash "$PR" 2>/dev/null)
 report G24-subagent-deny deny "$(decision_of "$out")" "$out"
 
-echo "# Grok guard-destructive: camelCase + run_terminal_command"
+echo "# Grok guard-destructive: camelCase + run_terminal_command（git の破壊操作は確認なし）"
 gd() {
   report "$1" "$2" "$(decision_of "$(run_hook_grok "$GD" pre_tool_use test-gd "$3" "" "$IN")")" "$3"
 }
 gd G30-rm-root deny 'rm -rf /'
 gd G31-rm-home deny 'rm -rf ~'
 gd G32-rm-claude deny 'rm -rf ~/.claude'
-gd G33-reset-hard ask 'git reset --hard HEAD~1'
+gd G33-reset-hard none 'git reset --hard HEAD~1'
 gd G34-rm-dist none 'rm -rf dist'
 gd G35-rm-outside deny 'rm -rf ~/Documents/a'
 

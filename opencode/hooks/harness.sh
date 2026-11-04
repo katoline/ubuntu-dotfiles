@@ -4,13 +4,14 @@
 # 呼び出し: bash harness.sh <op>  （JSON は stdin）
 #   guard        … guard-destructive.sh に PreToolUse(Bash) を渡す
 #   pr-pre       … pr-mode.sh に PreToolUse(Bash) を渡す
-#   pr-request   … pr-mode.sh に PermissionRequest(Bash) を渡す
+#   pr-request   … pr-mode.sh に PermissionRequest を渡す（コマンドは単一の Bash 入力）
 #   verify-post  … verify-gate.sh に PostToolUse を渡す
 #   verify-stop  … verify-gate.sh に Stop を渡す
 #
 # Git の許可判定は /pr の起動状態に依存しない（既定ブランチ保護方式）。pr-mode.sh の
-# PreToolUse は既定ブランチ宛の commit / push・force / 削除・マージを deny / ask し、
-# PermissionRequest は既定ブランチ以外の commit / push / PR 作成・更新を allow する。
+# PreToolUse は既定ブランチ宛の commit / push・force / 削除・宛先不明 push を deny し、
+# 確認が必要な PR のマージは ask する。PermissionRequest は PR_MODE_REQUEST_SCOPE=git で呼ぶので、
+# 既定ブランチ以外の commit / push / PR 作成・更新（単一コマンド）だけを allow する。
 #
 # 実体パスからリポジトリルートを解決するので、home-manager のリンク経由でも worktree でも同じ実体を使う。
 # 入力 JSON の解釈に失敗したとき・jq や共通スクリプトが無いときは exit 1（呼び出し側は拒否に倒す）。
@@ -60,7 +61,12 @@ run_pr() { # $1=event
          + (if $a == "" then {} else {agent_id:$a} end)') || exit 1 ;;
     *) exit 1 ;;
   esac
-  printf '%s' "$payload" | bash "$h"
+  if [ "$event" = "pr-request" ]; then
+    # OpenCode は main 時点の自動承認範囲（git の単一コマンドだけ）に戻す
+    printf '%s' "$payload" | PR_MODE_REQUEST_SCOPE=git bash "$h"
+  else
+    printf '%s' "$payload" | bash "$h"
+  fi
 }
 
 run_verify() {

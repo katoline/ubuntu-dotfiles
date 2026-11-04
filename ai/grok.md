@@ -11,4 +11,4 @@ Claude Code のモデル名・`settings.json` の書き方は Grok に当ては�
 
 ## 権限
 
-確認ダイアログは出ない（`permission_mode = "always-approve"`）。既定ブランチへの commit・push と force push は `pr-mode.sh` の PreToolUse が拒否し（既定ブランチ以外の commit・push・PR は通る）、PR のマージは ask になる。`guard-destructive.sh` の deny も止まる。ask は always-approve でも確認プロンプトになる。
+確認ダイアログは出ない（`permission_mode = "always-approve"`）。既定ブランチへの commit・push と force push は `pr-mode.sh` の PreToolUse が拒否し（既定ブランチ以外の commit・push・PR は通る）、PR のマージは設定の ask になる。`guard-destructive.sh` の deny も止まる。ask は always-approve でも確認プロンプトになる。

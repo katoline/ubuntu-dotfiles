@@ -203,13 +203,18 @@ try {
   const pushMain = await shell("feat", "git push origin main", REPO_FEAT, "f1p")
   check("push-to-protected-deny", () => assert.equal(pushMain.effect, "deny"))
 
-  // マージは常に ask、force push は deny、宛先不明の push は ask
+  // マージは ask、force push と宛先不明の push は deny
   const merge = await shell("feat", "gh pr merge 1", REPO_FEAT, "f1g")
   check("merge-keeps-ask", () => assert.equal(merge.effect, "ask"))
   const force = await shell("feat", "git push --force origin x", REPO_FEAT, "f1f")
   check("force-push-deny", () => assert.equal(force.effect, "deny"))
   const vars = await shell("feat", 'git push origin "$BRANCH"', REPO_FEAT, "f1v")
-  check("vars-push-ask", () => assert.equal(vars.effect, "ask"))
+  check("vars-push-deny", () => assert.equal(vars.effect, "deny"))
+  // OpenCode は main 時点の範囲に戻し、git 以外の ask を pr-request で消さない
+  const homeManager = await shell("feat", "home-manager switch", REPO_FEAT, "f1h")
+  check("home-manager-stays-ask", () => assert.equal(homeManager.effect, "ask"))
+  const resetHard = await shell("feat", "git reset --hard", REPO_FEAT, "f1r")
+  check("reset-hard-stays-ask", () => assert.equal(resetHard.effect, "ask"))
 
   // 通常子・worker の Git 書き込みは agent_id 付きで拒否する
   sessions.child = rootInfo("child", { parentID: "feat" })

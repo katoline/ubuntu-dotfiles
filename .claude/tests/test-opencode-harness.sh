@@ -30,9 +30,9 @@ report A01-safe-rm none "$(decision "$out")" "$out"
 out=$(op guard "$(jq -cn '{session_id:"opencode-g1",command:"rm -rf /etc/nope",cwd:"/tmp"}')")
 report A02-outside-rm deny "$(decision "$out")" "$out"
 out=$(op guard "$(jq -cn '{session_id:"opencode-g1",command:"rm -rf $VAR/x",cwd:"/tmp"}')")
-report A03-opaque-rm ask "$(decision "$out")" "$out"
+report A03-opaque-rm deny "$(decision "$out")" "$out"
 out=$(op guard "$(jq -cn '{session_id:"opencode-g1",command:"chmod -R 777 /tmp/x",cwd:"/tmp"}')")
-report A04-chmod-ask ask "$(decision "$out")" "$out"
+report A04-chmod-none none "$(decision "$out")" "$out"
 out=$(op guard "$(jq -cn '{session_id:"opencode-g1",command:"git commit -m x",cwd:"/tmp"}')")
 report A05-guard-git-none none "$(decision "$out")" "Git の可否は pr-mode が担当する"
 
@@ -62,7 +62,7 @@ report B03-request-commit-feat allow "$(decision "$out")" "$out"
 out=$(request 'git commit -m x' "$REPOS/main")
 report B04-request-commit-main deny "$(decision "$out")" "$out"
 out=$(pre 'gh pr merge 1')
-report B05-merge-ask ask "$(decision "$out")" "merge は PreToolUse で ask"
+report B05-merge-ask ask "$(decision "$out")" "確認が必要な merge は PreToolUse で ask"
 out=$(request 'gh pr merge 1')
 report B06-request-merge-none none "$(decision "$out")" "merge は自動 allow しない"
 out=$(pre 'git push --force origin x' "$REPOS/feat")
@@ -70,7 +70,14 @@ report B07-force-deny deny "$(decision "$out")" "$out"
 out=$(op pr-pre "$(jq -cn --arg d "$REPOS/feat" '{session_id:"opencode-p1",command:"git commit -m x",cwd:$d,agent_id:"child"}')")
 report B08-child-deny deny "$(decision "$out")" "$out"
 out=$(pre 'git push origin "$BRANCH"' "$REPOS/feat")
-report B09-vars-ask ask "$(decision "$out")" "$out"
+report B09-vars-deny deny "$(decision "$out")" "$out"
+# OpenCode の pr-request は main 時点の範囲（git の自動承認対象だけ）に戻す
+out=$(request 'home-manager switch' "$REPOS/feat")
+report B0K-request-home-manager-none none "$(decision "$out")" "$out"
+out=$(request 'apt install -y x' "$REPOS/feat")
+report B0L-request-apt-none none "$(decision "$out")" "$out"
+out=$(request 'git reset --hard' "$REPOS/feat")
+report B0M-request-reset-hard-none none "$(decision "$out")" "$out"
 out=$(pre 'git push origin main' "$REPOS/feat")
 report B0A-push-dest-main deny "$(decision "$out")" "$out"
 out=$(pre 'git push origin feat/x' "$REPOS/feat")

@@ -27,8 +27,8 @@ Grok CLI（xAI）の設定実体。適用は [nix/home.nix](../nix/home.nix) が
 
 `config.toml` の `permission_mode = "always-approve"` は通常の確認ダイアログを出さない設定。その代わり:
 
-- `pr-mode.sh` の `PreToolUse` が、既定ブランチ（main / master / origin/HEAD）への `git commit` / `git push`、force push、リモートブランチの削除を deny する。既定ブランチ以外の commit / push / PR 作成・更新は `/pr` の起動有無にかかわらず通し、自動承認条件を満たさない git 書き込み（`--amend` / `--no-verify` / 宛先を判定できない push など）だけ ask（always-approve でも確認になる）
-- `guard-destructive.sh` が致命的な削除を deny し、解釈できない削除は ask
+- `pr-mode.sh` の `PreToolUse` が、既定ブランチ（main / master / origin/HEAD）への `git commit` / `git push`、force push、リモートブランチの削除を deny する。既定ブランチ以外の commit / push / PR 作成・更新は `/pr` の起動有無にかかわらず通し、自動承認条件を満たさない git 書き込み（`--amend` / 複合コマンドなど）だけ ask（always-approve でも確認になる）。`--no-verify` と宛先を判定できない push は deny
+- `guard-destructive.sh` が致命的な削除と解釈できない削除を deny する（ask は返さない）
 - `settings.json` のシェル `ask` / `deny` ルールは always-approve でも効く（`gh pr merge`・`sudo`・グローバル install など）
 
 Git の判定は `/pr` の起動状態に依存せず、コマンドと対象リポジトリの状態から毎回行う。stdin は camelCase、イベント名は `GROK_HOOK_EVENT`、ツール名は `run_terminal_command`（matcher `Bash` のエイリアスでも当たる）。

@@ -6,15 +6,15 @@
 # - 既定ブランチ（main / master / origin/HEAD の指すブランチ）への commit / push は
 #   常に deny する（/pr の有無・bypass / always-approve・allow ルールに関係なく、
 #   PreToolUse の deny を最終防衛層にする）。
-# - それ以外のブランチでの git commit / git push / gh pr create（別名 new）/ gh pr edit /
-#   gh api の /pulls 書き込み（マージ以外）は、単一コマンドで秘密情報の検査を満たす
-#   ときに自動承認する（Claude は PermissionRequest の allow、Grok は PreToolUse の
-#   no-decision = 設定側の ask を PermissionRequest で昇格できないため Grok は
-#   PreToolUse で何も返さず設定の ask に委ねる。Grok は PermissionRequest を持たない）。
-# - PR のマージ（gh pr merge / gh api の /pulls/N/merge への PUT / GraphQL の
-#   mergePullRequest）は常に ask（Claude / Grok）。Codex は PreToolUse が ask を
-#   返せないため guard.sh 側で deny する（このフックは Claude/Grok 用）。
-# - force push・リモートブランチ削除・--all / --mirror・--no-verify は従来どおり deny。
+# - 確認ダイアログを出すのは「既定ブランチを base にする PR のマージ」だけ。
+#   PermissionRequest は、マージ以外（Bash / Edit / Write / MCP 等、複合コマンドを含む）を
+#   すべて allow する。gh pr merge は gh pr view で base を調べ、既定ブランチ宛
+#   （または base を判定できない）ときだけ何も返さず確認ダイアログに落とす。
+#   gh api によるマージ（/pulls/N/merge への PUT / GraphQL の mergePullRequest）は常に確認。
+# - PreToolUse は deny と、確認が必要なマージの ask・Grok 用の ask だけを返す。
+# - force push・リモートブランチ削除・--all / --mirror・--no-verify commit / push は deny。
+#   宛先を判定できない push と、コミット差分の秘密情報も deny。
+#   --amend を含む commit は何も返さない（確認なし）。
 # - サブエージェント（入力に agent_id がある）からの git 書き込みは deny。
 #
 # /pr のフラグ（claude-pr-mode-* / codex-pr-mode-*）は廃止した。判定は毎回
@@ -26,7 +26,11 @@
 # - それ以外はフック入力の cwd。変数・コマンド置換で解決できないときも cwd
 # - 判定は lib/git-write.sh に集約し、Codex / OpenCode の adapter と共有する
 #
-# 自動承認の条件（満たさなければ何も出力せず通常の確認ダイアログに落とす。拒否はしない）:
+# Grok（PermissionRequest を持たない）向けの ask:
+# - 自動承認条件を満たさない git 書き込みだけ PreToolUse で ask にする
+#   （always-approve でも確認になる）。Claude には影響しない
+#
+# 自動承認（Grok の ask 判定）の条件:
 # - コマンド文字列が git commit / git push / gh pr create / gh pr new / gh pr edit で始まるか、
 #   gh api の /pulls への書き込み（POST / PUT / PATCH / -f / --input。マージ以外）
 # - 引用符の中身と HEREDOC 本文を除いた上で、複合コマンド・コマンド置換・
@@ -215,34 +219,37 @@ case "$event" in
         ;;
     esac
 
-    # PR のマージは常に確認ダイアログ
-    if is_pr_merge "$cmd"; then
-      emit_pre_ask 'PR のマージは自動許可しません。内容を確認してから実行してください。'
+    # --no-verify / -n を含む commit は deny（--amend は何も返さず確認なしで通す）
+    if _commit_has_noverify "$cmd"; then
+      emit_pre_deny '--no-verify は使いません。フックを回避せずにコミットしてください。'
       exit 0
     fi
 
-    # 履歴改変・フック回避の commit は自動承認しない
-    if [ "$(commit_verdict "$cmd" "$cwd")" = ask ]; then
-      emit_pre_ask '--amend / --no-verify / -n を含むコミットは自動許可しません。内容を確認してください。'
-      exit 0
-    fi
-
-    # 宛先を判定できない push は確認ダイアログ
+    # 宛先を判定できない push は deny（ブランチ名を明示させる）
     if [ "$push_kind" = indeterminate ]; then
-      emit_pre_ask 'push の宛先を判定できません（変数・ワイルドカード等）。宛先を確認してください。'
+      emit_pre_deny 'push の宛先を判定できません。ブランチ名を明示して実行してください'
       exit 0
     fi
 
-    # コミット直前に、コミットされる差分の秘密情報を検査する（一致があれば自動承認しない）
+    # コミット直前に、コミットされる差分の秘密情報を検査する（一致があれば deny）
     case "$cmd" in
       "git commit"*)
         hits=$(secret_hits "$cmd")
         if [ -n "$hits" ]; then
-          emit_pre_ask "コミットされる差分に秘密情報の形式が見つかりました: ${hits}。該当ファイルを add から外すか、ユーザーに確認してください。"
+          emit_pre_deny "コミットされる差分に秘密情報の形式が見つかりました: ${hits}。該当箇所を add から外してください（必要ならユーザーに確認してください）。"
           exit 0
         fi
         ;;
     esac
+
+    # 確認が必要な PR のマージは、設定の ask ルールやモードに依存せず PreToolUse で ask を返す。
+    # 既定ブランチ以外宛の gh pr merge は何も返さない（PermissionRequest が allow する）。
+    if is_pr_merge "$cmd"; then
+      if ! is_gh_pr_merge "$cmd" || pr_merge_needs_confirm "$cmd" "$cwd"; then
+        emit_pre_ask '既定ブランチ（main 等）を base にする PR のマージです。内容を確認してから承認してください'
+      fi
+      exit 0
+    fi
 
     # Grok は PermissionRequest を持たない。自動承認条件を満たさない git 書き込みは ask
     # （hook の ask は always-approve でも確認プロンプトになる）
@@ -251,33 +258,61 @@ case "$event" in
     fi
     ;;
   PermissionRequest)
+    # ユーザー操作そのものが目的のツールは allow せず、通常の UI に任せる
     tool=$(printf '%s' "$input" | jq -r '.tool_name // .toolName // empty')
-    is_shell_tool "$tool" || exit 0
-    cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // .toolInput.command // empty')
-    [ -n "$cmd" ] || exit 0
-
-    # PreToolUse が無効な環境向けの二重化。既定ブランチ・force・削除系は deny。
-    if is_force_push "$cmd"; then
-      emit_perm_deny 'force push は禁止されています'
-      exit 0
-    fi
-    if [ "$(commit_verdict "$cmd" "$cwd")" = protected ]; then
-      emit_perm_deny '既定ブランチへの commit は禁止されています'
-      exit 0
-    fi
-    case "$(push_destination_verdict "$cmd" "$cwd")" in
-      all | delete | force | no-verify | protected)
-        emit_perm_deny '既定ブランチ宛・force・削除系の push は許可されません'
-        exit 0
-        ;;
+    case "$tool" in
+      AskUserQuestion | ExitPlanMode | EnterPlanMode) exit 0 ;;
     esac
 
-    # マージは確認ダイアログ（allow を返さない）
-    if is_pr_merge "$cmd"; then exit 0; fi
+    # ツールの種類は問わない（Bash / Edit / Write / MCP 等）。コマンドがある場合だけ deny 判定を行う。
+    cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // .toolInput.command // empty')
+    if [ -n "$cmd" ]; then
+      # PreToolUse が無効な環境向けの二重化。既定ブランチ・force・削除系は deny。
+      if is_force_push "$cmd"; then
+        emit_perm_deny 'force push は禁止されています'
+        exit 0
+      fi
+      if [ "$(commit_verdict "$cmd" "$cwd")" = protected ]; then
+        emit_perm_deny '既定ブランチへの commit は禁止されています'
+        exit 0
+      fi
+      if _commit_has_noverify "$cmd"; then
+        emit_perm_deny '--no-verify は使いません'
+        exit 0
+      fi
+      case "$(push_destination_verdict "$cmd" "$cwd")" in
+        all | delete | force | no-verify | protected)
+          emit_perm_deny '既定ブランチ宛・force・削除系の push は許可されません'
+          exit 0
+          ;;
+        indeterminate)
+          emit_perm_deny 'push の宛先を判定できません。ブランチ名を明示して実行してください'
+          exit 0
+          ;;
+      esac
 
-    if is_auto_approvable "$cmd"; then
-      jq -cn '{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior:"allow"}}}'
+      # PR のマージだけは確認ダイアログを残す。
+      # gh pr merge は base が既定ブランチ（または判定不能）のときだけ何も返さない。
+      # gh api のマージは常に何も返さない。
+      # OpenCode（PR_MODE_REQUEST_SCOPE=git）は main 時点と同じくマージを allow しない。
+      if is_pr_merge "$cmd"; then
+        if [ "${PR_MODE_REQUEST_SCOPE:-}" != git ] && is_gh_pr_merge "$cmd" && ! pr_merge_needs_confirm "$cmd" "$cwd"; then
+          jq -cn '{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior:"allow"}}}'
+        fi
+        exit 0
+      fi
     fi
+
+    # OpenCode は main 時点の自動承認範囲（Bash の単一コマンドで is_auto_approvable を満たすものだけ）に戻す
+    if [ "${PR_MODE_REQUEST_SCOPE:-}" = git ]; then
+      if is_shell_tool "$tool" && [ -n "$cmd" ] && is_auto_approvable "$cmd"; then
+        jq -cn '{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior:"allow"}}}'
+      fi
+      exit 0
+    fi
+
+    # マージ以外は、ツールの種類・コマンドの形に関係なく確認なしで許可する
+    jq -cn '{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior:"allow"}}}'
     ;;
 esac
 
