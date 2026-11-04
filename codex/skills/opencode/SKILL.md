@@ -30,7 +30,8 @@ description: Codex から OpenCode へ、ユーザーが明示的に求めた作
   1. `opencode/deepseek-v4.1-flash-free`
   2. `opencode/glm-5.3-flash-free`
   3. `opencode-go/deepseek-v4.1-flash`
-- Go まで上限なら非0で停止する。認証・Privacy の地域拒否・権限拒否・通信・モデル不存在・context length・その他の失敗は切り替えず、その場で停止する。途中まで進んで上限になった場合は、得られた OpenCode セッションを続けて未完了分から再開する。
+  4. `console-anthropic/claude-sonnet-5-5#medium`（OpenCode に登録した Anthropic API キー経由。従量課金）
+- Sonnet まで上限なら非0で停止する。認証・Privacy の地域拒否・権限拒否・通信・モデル不存在・context length・その他の失敗は切り替えず、その場で停止する。途中まで進んで上限になった場合は、得られた OpenCode セッションを続けて未完了分から再開する。
 - ユーザーが `--model provider/model#variant` を明示した場合は、そのモデルだけで実行し自動切替しない（既定値と同じ文字列でも明示指定を優先）。
 - Go の利用上限後に従量残高を消費しないためには、利用者が Console で Use balance を無効にしておく（Go サブスク枠内に留める前提。設定や認証は読まず変更もしない。権限付与でもない）。
 - Codex 本体のモデル設定は変更しない。

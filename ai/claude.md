@@ -5,18 +5,21 @@
 
 # モデル運用（Claude Code）
 
-メインセッション向け。委譲の原則は `~/.claude/CLAUDE.md` の「サブエージェント」。本節は Claude 内部のサブエージェント用で、親 Skill から OpenCode へ委譲する場合は Skill の指定を優先する。モデルは Agent ツールの `model` で選ぶ（未指定なら `settings.json` の `CLAUDE_CODE_SUBAGENT_MODEL` = opus）。
+<!-- 2026-11-04 ユーザー指定：設計・レビューは Claude Code の Opus 5.5（effort medium）、実装・調査・テストは OpenCode。
+     モデル（opus[1m]）と effortLevel（medium）は .claude/settings.json、OpenCode の切替順は skills/opencode/scripts/run.sh -->
 
-- **sonnet**：実装の既定。仕様と完了条件を固めてから渡す（既存パターンに沿った追加、複数ファイルの修正、テスト作成、ドキュメント更新、機械的なリファクタ、複数ファイルを読む調査・要約、公式ドキュメントの調べもの）
-- **opus**：仕様を固めきれない作業（不具合の原因調査、設計に関わるリファクタ）、sonnet がレビューで差し戻された作業の出し直し、独立レビュー。並行処理・データ移行・長く多段の課題もまず opus
-- **haiku**：所在の特定・検索・単純な事実確認・出力の要約。実装には使わない（Explore は `agents/Explore.md` で haiku 固定。難しい探索は `model: "sonnet"` を渡す）
-- **fable**：消費が大きいので次の2つに限る。(a) 文脈が揃っているのに opus が同じ問題で2回続けて誤った (b) 外部の入力に晒されるセキュリティ境界の設計・実装（事故防止の部品は含まない）。「重い」「大事そう」というだけで選ばない
+メインセッション向け（サブエージェントとして起動されたら本節と `/opencode` は使わず、与えられた指示を実行する）。委譲の原則は `~/.claude/CLAUDE.md` の「サブエージェント」。Claude Code は Opus 5.5・effort medium で動かす。
+
+- **Claude（メイン）**：要件整理・設計・分解・指示・レビュー・最終判断。1〜2ファイルの確認と自明な局所修正は自分で行ってよい
+- **OpenCode**：実装・複数ファイルにまたがる調査・テスト作成と実行・ドキュメント更新は、ユーザーの明示的な呼出しがなくても `/opencode` Skill（`~/.claude/skills/opencode/SKILL.md`）で委譲する。Claude のサブエージェント（Explore を含む）へは回さない
+- **Claude のサブエージェント**：独立レビューだけに使う。新しいコンテキストの opus（`CLAUDE_CODE_SUBAGENT_MODEL`）に、Agent ツールで `effort: "medium"` を渡す
 
 運用：
 
-- モデルを上げる前に失敗の原因を見る。見落とし・検証漏れ・指示不足なら指示を直して同じモデルで出し直し、文脈が揃っていて誤ったときだけ上げる（sonnet / haiku → opus → fable）
-- 独立レビューは原則、実装の経緯を知らない新しいコンテキストの opus で行う（メインの直接実装も含む）。外部入力に晒されるセキュリティ境界だけ opus と fable の2本を並列で独立にレビューさせ、食い違ったらメインが再現経路で判断する（決めきれなければユーザーに確認）
-- 検索・事実確認・出力の要約・機械的な作業の委譲には Agent ツールで `effort: "medium"` を渡す（実装・原因調査・レビューは渡さず既定のまま）
+- OpenCode の切替順（利用上限のときだけ）は DeepSeek V4.1 Flash Free → GLM 5.3 Flash Free → OpenCode Go の DeepSeek V4.1 Flash → API 登録の Claude Sonnet 5.5（medium）。ランナーが自動で切り替えるので、手で `--model` を指定しない
+- Sonnet まで上限になったとき、または OpenCode が使えないとき（認証・地域拒否・未インストール等）は、Claude のサブエージェントやメインで実装を肩代わりせず、状況を報告してユーザーに判断を仰ぐ
+- ユーザーが「Claude でやって」等とその作業に明示したときだけ、OpenCode を使わずメインまたはサブエージェント（opus）で行う
+- OpenCode が報告した検証結果は鵜呑みにせず、変更後にプロジェクトの検証コマンドをメインがフォアグラウンドで実行し直す（`verify-gate.sh` は OpenCode の編集を検出しない）
 
 # フックの挙動（Claude Code）
 

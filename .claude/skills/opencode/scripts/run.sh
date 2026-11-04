@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Claude Code / Codex から OpenCode を非対話で起動して作業を任せ、結果を要約して表示する。
 # 指示は標準入力から読む。生の JSONL と stderr は ${TMPDIR:-/tmp}/claude-opencode-logs/ に残す。
-# 既定モデルが利用上限（レート制限・quota）のときだけ、fallback_models の順に切り替える。
+# 既定モデルが利用上限（レート制限・quota）のときだけ、fallback_models の順に切り替える（4段目は従量課金の Sonnet 5.5）。
 # --model を明示した場合はそのモデルだけで実行し、自動切替しない。
 # --auto は ask 規則（rm・git commit・git push 等）を自動承認してしまうため、決して付けない。
 set -euo pipefail
 
 default_model="opencode/deepseek-v4.1-flash-free"
-# 利用上限のときだけ、この順に1回ずつ試す（通常従量課金の opencode/deepseek-v4.1-flash は含めない）
+# 利用上限のときだけ、この順に1回ずつ試す（通常従量課金の opencode/deepseek-v4.1-flash は含めない）。
+# 4段目の console-anthropic/claude-sonnet-5-5#medium は OpenCode に登録した Anthropic API キー経由の従量課金
 fallback_models=(
   "opencode/deepseek-v4.1-flash-free"
   "opencode/glm-5.3-flash-free"
   "opencode-go/deepseek-v4.1-flash"
+  "console-anthropic/claude-sonnet-5-5#medium"
 )
 
 usage() {
@@ -22,7 +24,7 @@ PROMPT
 
 --model を省略した場合、利用上限（レート制限・quota）のときだけ
 opencode/deepseek-v4.1-flash-free → opencode/glm-5.3-flash-free → opencode-go/deepseek-v4.1-flash
-の順に1回ずつ切り替える。--model を明示した場合は自動切替しない。
+→ console-anthropic/claude-sonnet-5-5#medium（従量課金）の順に1回ずつ切り替える。--model を明示した場合は自動切替しない。
 EOF
   exit 2
 }
@@ -84,6 +86,17 @@ fi
 log_dir="${TMPDIR:-/tmp}/claude-opencode-logs"
 mkdir -p "$log_dir"
 stamp="$(date +%Y%m%d-%H%M%S)-$$"
+
+# 実行中マーカー。notify.sh が Stop 通知を抑止するために読む。
+# TMPDIR はフックと Bash ツールで異なりうるため使わず、HOME 配下の固定パスにする。
+# 3行目は git common dir（同じリポジトリの worktree でも抑止できるようにする。git 管理外なら空行）。
+marker_dir="${HOME}/.cache/claude-opencode-running"
+if mkdir -p "$marker_dir" 2>/dev/null; then
+  marker_file="$marker_dir/$stamp"
+  common_dir="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  printf '%s\n%s\n%s\n' "$$" "$dir" "$common_dir" > "$marker_file" 2>/dev/null || true
+  trap 'rm -f "${marker_file:-}"' EXIT
+fi
 
 # --model を明示したときは自動切替しない（既定値と同じ文字列でも明示指定を優先する）
 candidates=("${fallback_models[@]}")

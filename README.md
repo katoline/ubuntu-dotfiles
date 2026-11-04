@@ -183,7 +183,7 @@ nix flake update
 - `/clean-branches`：ローカルブランチのうちmain・develop以外を削除して整理する
 - `/nix-setup`：新規プロジェクトの開発環境をNixのdevShell + direnvでセットアップする
 - `/git-pull`：ワークスペース直下のリポジトリをmainに切り替えてfast-forward-onlyでpullする（変更中や分岐したリポジトリは保全）
-- `/opencode` / `$opencode`：Claude Codeの `/opencode`、Codexの `$opencode` からOpenCodeを非対話で起動して実装を任せ、結果を親CLIがレビューする。新しいランナーは自動で `delegated-worker` Agentを使い、commit / push / PR・worktree変更・ユーザーへの質問・子への再委譲を行わない（OpenCode単体は build のままで通常どおり使える）。既定は `opencode/deepseek-v4.1-flash-free` で、利用上限時のみ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` へ切り替える。通常は今回の依頼だけ、`--session-wide` は現在の会話の以後の実装すべて、`--once` は解除。詳細は [Claude用](/.claude/skills/opencode/SKILL.md)・[Codex用](/codex/skills/opencode/SKILL.md)
+- `/opencode` / `$opencode`：Claude Codeの `/opencode`、Codexの `$opencode` からOpenCodeを非対話で起動して実装を任せ、結果を親CLIがレビューする。新しいランナーは自動で `delegated-worker` Agentを使い、commit / push / PR・worktree変更・ユーザーへの質問・子への再委譲を行わない（OpenCode単体は build のままで通常どおり使える）。既定は `opencode/deepseek-v4.1-flash-free` で、利用上限時のみ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` → `console-anthropic/claude-sonnet-5-5#medium`（Anthropic API の従量課金）へ切り替え、Sonnet まで上限なら停止する。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても OpenCode へ委譲する（`--session-wide` / `--once` は廃止）。Codex の `$opencode` は従来どおり（オプションなしは今回だけ・`--session-wide`・`--once`）。詳細は [Claude用](/.claude/skills/opencode/SKILL.md)・[Codex用](/codex/skills/opencode/SKILL.md)
 
 ### セットアップスクリプト
 - `bash .claude/setup.sh`：`.claude/`配下（gitが管理するファイルのみ）を`~/.claude`へシンボリックリンク
