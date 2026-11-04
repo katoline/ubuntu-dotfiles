@@ -9,12 +9,21 @@ RUNNER="$REPO_DIR/.claude/skills/opencode/scripts/run.sh"
 STUB_DIR="$T/opencode-stub"
 STATE="$T/opencode-state"
 PROJECT="$T/opencode-project"
-mkdir -p "$STUB_DIR" "$PROJECT"
+# 実行中マーカー（run.sh が $HOME/.cache/claude-opencode-running/ に作る）を本物の HOME に出さない
+export HOME="$T/opencode-home"
+mkdir -p "$STUB_DIR" "$PROJECT" "$HOME"
 
 cat > "$STUB_DIR/opencode" <<'STUB'
 #!/usr/bin/env bash
 set -u
 state="${STUB_STATE:?}"
+if [ -n "${STUB_CHECK_MARKER:-}" ]; then
+  if ls "$HOME"/.cache/claude-opencode-running/* >/dev/null 2>&1; then
+    echo yes > "$state/marker_seen"
+  else
+    echo no > "$state/marker_seen"
+  fi
+fi
 if [ "${1:-}" = "session" ]; then
   exit 0
 fi
@@ -105,6 +114,7 @@ attempt_errlogs() { find "$T/claude-opencode-logs" -name '*-attempt*.stderr.log'
 DEFAULT="opencode/deepseek-v4.1-flash-free"
 GLM="opencode/glm-5.3-flash-free"
 GO="opencode-go/deepseek-v4.1-flash"
+SONNET="console-anthropic/claude-sonnet-5-5#medium"
 
 echo "# A. 既定モデルの実行と順次切替"
 envs
@@ -133,11 +143,20 @@ report A03-final-model yes "$(has "$(cat "$OUT")" "- モデル: $GO")" ""
 report A03-all-agents delegated-worker "$(agents_unique)" ""
 
 envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO"
-run_runner A04-all-limit
-report A04-nonzero yes "$(if [ "$RC" -ne 0 ]; then echo yes; else echo no; fi)" "rc=$RC"
-report A04-three-models 3 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
-report A04-stop-note yes "$(has "$(cat "$OUT")" '利用上限のため停止')" ""
-report A04-final-go yes "$(has "$(cat "$OUT")" "- モデル: $GO")" ""
+run_runner A04-limit-to-sonnet
+report A04-rc 0 "$RC" "$(cat "$ERR")"
+report A04-four-models 4 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
+report A04-fourth-model "$SONNET" "$(line_at 4 "$STATE/models")" ""
+report A04-final-model yes "$(has "$(cat "$OUT")" "- モデル: $SONNET")" ""
+report A04-all-agents delegated-worker "$(agents_unique)" ""
+
+envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO $SONNET"
+run_runner A05-all-limit
+report A05-nonzero yes "$(if [ "$RC" -ne 0 ]; then echo yes; else echo no; fi)" "rc=$RC"
+report A05-four-models 4 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
+report A05-stop-note yes "$(has "$(cat "$OUT")" '利用上限のため停止')" ""
+report A05-final-sonnet yes "$(has "$(cat "$OUT")" "- モデル: $SONNET")" ""
+report A05-trial-4-sonnet yes "$(has "$(cat "$OUT")" "4. $SONNET")" "試行ログの4番目に Sonnet"
 
 echo "# B. 明示 --model / -m は自動切替しない"
 envs "STUB_LIMIT_MODELS=$DEFAULT"
@@ -164,6 +183,13 @@ run_runner C02-go-region
 report C02-nonzero yes "$(if [ "$RC" -ne 0 ]; then echo yes; else echo no; fi)" "rc=$RC"
 report C02-three-models 3 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
 report C02-stops-at-go "$GO" "$(line_at 3 "$STATE/models")" ""
+
+envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO" "STUB_REGION_MODELS=$SONNET"
+run_runner C05-sonnet-region
+report C05-nonzero yes "$(if [ "$RC" -ne 0 ]; then echo yes; else echo no; fi)" "rc=$RC"
+report C05-four-models 4 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
+report C05-stops-at-sonnet "$SONNET" "$(line_at 4 "$STATE/models")" ""
+report C05-stop-note yes "$(has "$(cat "$OUT")" '利用上限以外の失敗のため停止')" ""
 
 envs "STUB_TOOL_MODELS=$DEFAULT"
 run_runner C03-tool-error-zero-exit
@@ -200,21 +226,22 @@ report D03-rc 0 "$RC" "$(cat "$ERR")"
 report D03-keeps-user-session ses_user "$(line_at 2 "$STATE/sessions")" ""
 report D03-all-agents delegated-worker "$(agents_unique)" "利用者が --session を指定した再開でも同じ agent"
 
-envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO" "STUB_NO_SESSION_MODELS=$DEFAULT $GLM $GO"
+envs "STUB_LIMIT_MODELS=$DEFAULT $GLM $GO $SONNET" "STUB_NO_SESSION_MODELS=$DEFAULT $GLM $GO $SONNET"
 run_runner D04-all-limit-no-session
 report D04-nonzero yes "$(if [ "$RC" -ne 0 ]; then echo yes; else echo no; fi)" "rc=$RC"
-report D04-three-models 3 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
+report D04-four-models 4 "$(count_lines "$STATE/models")" "$(cat "$STATE/models")"
 report D04-no-session yes "$(has "$(cat "$OUT")" 'セッションID: 取得できませんでした')" ""
-report D04-final-go yes "$(has "$(cat "$OUT")" "- モデル: $GO")" ""
+report D04-final-sonnet yes "$(has "$(cat "$OUT")" "- モデル: $SONNET")" ""
 report D04-switch-reason yes "$(has "$(cat "$OUT")" '利用上限のため次のモデルへ切替')" ""
 report D04-stop-reason yes "$(has "$(cat "$OUT")" '利用上限のため停止')" ""
 report D04-trial-1 yes "$(has "$(cat "$OUT")" "1. $DEFAULT")" ""
 report D04-trial-2 yes "$(has "$(cat "$OUT")" "2. $GLM")" ""
 report D04-trial-3 yes "$(has "$(cat "$OUT")" "3. $GO")" ""
-report D04-attempt-logs 3 "$(attempt_logs)" ""
-report D04-attempt-errlogs 3 "$(attempt_errlogs)" ""
-report D04-jsonl-lines 4 "$(grep -c 'JSONL: ' "$OUT")" "試行3件＋最終ログ"
-report D04-stderr-lines 4 "$(grep -c 'stderr: ' "$OUT")" "試行3件＋最終ログ"
+report D04-trial-4 yes "$(has "$(cat "$OUT")" "4. $SONNET")" ""
+report D04-attempt-logs 4 "$(attempt_logs)" ""
+report D04-attempt-errlogs 4 "$(attempt_errlogs)" ""
+report D04-jsonl-lines 5 "$(grep -c 'JSONL: ' "$OUT")" "試行4件＋最終ログ"
+report D04-stderr-lines 5 "$(grep -c 'stderr: ' "$OUT")" "試行4件＋最終ログ"
 report D04-no-continue-hint yes "$(has "$(cat "$OUT")" '続行案内はありません')" ""
 
 envs "STUB_AUTH_MODELS=$DEFAULT" "STUB_NO_SESSION_MODELS=$DEFAULT"
@@ -234,5 +261,12 @@ run_runner E01-auto-rejected --auto
 report E01-rc 2 "$RC" "$(cat "$ERR")"
 report E01-no-run 0 "$(count_lines "$STATE/models")" "$(cat "$STATE/models" 2>/dev/null)"
 report E01-message yes "$(has "$(cat "$ERR")" '--auto は受け付けません')" "$(cat "$ERR")"
+
+echo "# F. 実行中マーカーの作成と後始末"
+envs "STUB_CHECK_MARKER=1"
+run_runner F01-marker-cleanup
+report F01-rc 0 "$RC" "$(cat "$ERR")"
+report F01-marker-seen yes "$(cat "$STATE/marker_seen" 2>/dev/null)" "OpenCode 実行中はマーカーがある"
+report F01-no-marker 0 "$(find "$HOME/.cache/claude-opencode-running" -type f 2>/dev/null | wc -l | tr -d ' ')" "実行後にマーカーが残らない"
 
 summary "opencode-run"

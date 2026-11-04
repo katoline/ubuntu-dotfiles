@@ -14,7 +14,7 @@
 /opencode
 ```
 
-`/opencode` は Claude Code 専用で、OpenCode へ実装を委譲する（既定は `opencode/deepseek-v4.1-flash-free`）。通常は今回の依頼だけ、`--session-wide` で現在の会話の以後の実装すべて、`--once` で解除する。Codex からは `$opencode` を使う。詳細は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md) と [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md)。
+`/opencode` は Claude Code 専用で、OpenCode へ実装を委譲する（既定は `opencode/deepseek-v4.1-flash-free`）。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても委譲する。利用上限時は GLM 5.3 Flash Free → Go → Sonnet 5.5（従量課金）へ自動切替。Codex からは `$opencode` を使う（今回だけ・`--session-wide`・`--once`）。詳細は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md) と [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md)。
 
 ## OpenCode
 

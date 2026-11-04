@@ -46,7 +46,7 @@ OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.c
 
 - Claude Code は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md)、Codex は [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md) から共有ランナー（`.claude/skills/opencode/scripts/run.sh`）を呼ぶ。ランナーは新規・`--session` 再開・利用上限時の fallback のすべてで `--agent delegated-worker` を付ける
 - 親は必要な Skill を自分で読み、委譲指示に関連する制約だけを含める。親の会話全文や全 Skill を子へコピーしない
-- fallback（DeepSeek V4.1 Flash Free → GLM 5.3 Flash Free → Go）と `--session-wide` / `--once` は親 Skill と共有ランナー側の機能で、委譲時にだけ働く。単体起動（`build`）には自動 fallback や scope オプションを追加していない
+- fallback（DeepSeek V4.1 Flash Free → GLM 5.3 Flash Free → Go → Sonnet 5.5。Sonnet は Anthropic API の従量課金）は共有ランナー、`--session-wide` / `--once` は Codex の `$opencode` の機能で、委譲時にだけ働く（Claude Code の `/opencode` は常時有効でオプションなし）。単体起動（`build`）には自動 fallback や scope オプションを追加していない
 - `delegated-worker` はユーザーへの質問・子への再委譲・Skill の読み込み・Code Mode（内蔵 session / worktree 管理・MCP）・Git の書き込み・worktree の変更を持たない。外部連携が要る調査は親が行い、結果だけを渡す
 
 ## インストール・認証

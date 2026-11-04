@@ -24,7 +24,7 @@
 | `skills/clean-branches/SKILL.md` | `/clean-branches` スキル：ローカルブランチのうちデフォルトブランチ・使用中のブランチ以外を削除して整理（未マージは確認後のみ） |
 | `skills/nix-setup/SKILL.md` | `/nix-setup` スキル：新規プロジェクトの開発環境をNix devShell + direnvでセットアップ |
 | `skills/git-pull/SKILL.md` | `/git-pull` スキル：直下の各リポジトリを `main` に切り替えてfast-forward-onlyでpull（変更があるリポジトリはスキップ） |
-| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約・レビューする。オプションなしは今回だけ、`--session-wide` は以後の実装も委譲、`--once` は解除（親会話の状態で持ち、永続化しない）。既定モデル `opencode/deepseek-v4.1-flash-free`、利用上限時は `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` の順に自動切替（`--model` 明示時は切替なし、`--auto` は使わない）。Go は Console の Use balance を無効にする前提。Claude Code 専用（OpenCode では `opencode.json` で deny）。Codex は `codex/skills/opencode/SKILL.md` から同じ `scripts/run.sh` を使う。ランナーは OpenCode を `--agent delegated-worker`（Skill / subagent / question / execute・Git 書き込み・PR・worktree 変更なし）で起動し、単体の build とは分離する |
+| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約・レビューする。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても OpenCode へ委譲する（`--session-wide` / `--once` は廃止。Codex の `$opencode` は従来どおりオプションなしは今回だけ・`--session-wide`・`--once`）。既定モデル `opencode/deepseek-v4.1-flash-free`、利用上限時は `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` → `console-anthropic/claude-sonnet-5-5#medium`（Anthropic API の従量課金）の順に自動切替し、Sonnet まで上限なら停止（`--model` 明示時は切替なし、`--auto` は使わない）。Go は Console の Use balance を無効にする前提。Claude Code 専用（OpenCode では `opencode.json` で deny）。Codex は `codex/skills/opencode/SKILL.md` から同じ `scripts/run.sh` を使う。ランナーは OpenCode を `--agent delegated-worker`（Skill / subagent / question / execute・Git 書き込み・PR・worktree 変更なし）で起動し、単体の build とは分離する |
 | `claude-notify.example.json` | iPhoneプッシュ通知（claude-notify）設定のテンプレート |
 | `setup.sh` | `.claude/` 配下（gitが管理するファイルのみ）を `~/.claude` へシンボリックリンクするスクリプト |
 | `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / validate-claude-config / Grok 互換 / Codex の `codex/hooks/guard.sh`）、OpenCode 委譲ランナーのモデル切替テスト（opencode-run）、OpenCode の単体 build / `delegated-worker` の実効 permission テスト（opencode-permissions）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
@@ -63,7 +63,7 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
   - `PreToolUse` の `hooks/pr-mode.sh`・`hooks/guard-destructive.sh` は、高負荷時の打ち切りを減らすため timeout を30秒とし、`onFailure: "block"` を付けている。**外さないこと**（外すと安全装置が壊れたとき＝起動不能・タイムアウト・想定外の exit コードのときに黙って素通りになる）。代償として、フックのファイルが消える・壊れると全 Bash が止まる
   - Orca（エージェント管理アプリ）が書き込んだフックと `statusLine`（コマンドに `orca` を含むもの）は外部ツール由来なので手で編集しない。`tests/run.sh` が「登録元が `bash $HOME/.claude/hooks/<実在するスクリプト>` か許可リストの外部ツールか」を検査し、知らない登録元が増えたら落ちる
 - `env.CLAUDE_CODE_SUBAGENT_MODEL`：`opus`（サブエージェントの既定モデル。振り分けは `ai/claude.md`）
-- Agent ツール呼び出しの `effort`（`ai/claude.md` で検索・事実確認・要約・機械的作業を `medium` に落とす指定）は Claude Code v2.1.292 以降が対応（[Choose an effort level](https://code.claude.com/docs/en/sub-agents)）。サブエージェントのモデル既定値 `CLAUDE_CODE_SUBAGENT_MODEL` は変更しない
+- Agent ツール呼び出しの `effort`（`ai/claude.md` でレビュー用サブエージェントに `medium` を渡す指定）は Claude Code v2.1.292 以降が対応（[Choose an effort level](https://code.claude.com/docs/en/sub-agents)）。サブエージェントのモデル既定値 `CLAUDE_CODE_SUBAGENT_MODEL` は変更しない
 - `skipWorkflowUsageWarning`：`true`
 - `theme`：`dark`
 - `model`：`/model` で Claude Code 自身が書き換えるため現在値は転記しない（実際の値は settings.json を参照）
@@ -155,7 +155,7 @@ bash .claude/tests/run.sh
 
 ## iPhoneプッシュ通知（claude-notify）
 
-`Stop`（タスク完了）/ `Notification`（許可待ち。matcher で `permission_prompt` のみ）イベントで `hooks/notify.sh` を実行し、Web Push で iPhone の PWA に通知する。送信本体（`claude-notify/send-push.mjs`）は**この dotfiles リポジトリに同梱**されており、notify.sh は自身の実体パスから場所を解決する（`CLAUDE_NOTIFY_REPO` などの環境変数は不要）。依存（`web-push`）は `home-manager switch` 時に home-manager の activation が `pnpm install --frozen-lockfile` で自動導入する。依存が入っていない PC では何もせず静かに終了する。受信側の PWA は別リポジトリ claude-notify-mobile（Vercel 配信）にあり、仕組みは同リポジトリの `docs/SETUP.md` を参照。
+`Stop`（タスク完了）/ `Notification`（許可待ち。matcher で `permission_prompt` のみ）イベントで `hooks/notify.sh` を実行し、Web Push で iPhone の PWA に通知する。委譲した OpenCode（`run.sh`）が同じプロジェクトで実行中の間は Stop 通知を送らない（同じリポジトリの worktree でも抑止。マーカー `~/.cache/claude-opencode-running/`）。送信本体（`claude-notify/send-push.mjs`）は**この dotfiles リポジトリに同梱**されており、notify.sh は自身の実体パスから場所を解決する（`CLAUDE_NOTIFY_REPO` などの環境変数は不要）。依存（`web-push`）は `home-manager switch` 時に home-manager の activation が `pnpm install --frozen-lockfile` で自動導入する。依存が入っていない PC では何もせず静かに終了する。受信側の PWA は別リポジトリ claude-notify-mobile（Vercel 配信）にあり、仕組みは同リポジトリの `docs/SETUP.md` を参照。
 
 **Grok CLI でも同じ通知が届く**。notify.sh が `GROK_HOOK_EVENT` で呼び出し元を判別し、応答完了（`reason == "end_turn"` の Stop）と許可待ち（`notificationType == "permission_prompt"` の Notification）だけをタイトル「(Grok)」付きで通知する。
 
