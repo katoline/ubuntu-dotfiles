@@ -53,4 +53,4 @@ Ubuntu用の個人dotfiles。全体像は `README.md`、Nix運用は `nix/README
 - `ai/` の変更後は配布のため `bash ai/install.sh` も実行する（Claude Code 以外は連結生成）
 - シェル変更時：対象に応じて `bash -n bootstrap.sh` / `bash -n opencode/setup.sh` / `bash -n zsh/.zshrc`（`run.sh` が見るのは上記の対象のみ）
 - `claude-notify/` の変更後：`cd claude-notify && pnpm lint`
-- CI（`.github/workflows/ci.yml` の `verify`）は同じ検証（`run.sh`・シェル構文・Nix評価・Biome）を main 向けPRと main へのpushで実行する。
+- CI（`.github/workflows/ci.yml` の `verify`）は同じ検証（`run.sh`・シェル構文・Nix評価・Biome）を main 向けPRと main へのpushで実行する。`node-security.yml` の `node-security` は Node の入力（`flake.nix`・`flake.lock`・`scripts/check-node-security.mjs`）が変わったときだけ Nix の Node.js を検証する（必須チェックではない）。
