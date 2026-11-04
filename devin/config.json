@@ -11,7 +11,6 @@
       "Exec(git push --force)",
       "Exec(git push --force-with-lease)",
       "Exec(git push -f)",
-      "Exec(gh pr merge)",
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
       "Read(~/.gnupg/**)",
@@ -29,6 +28,7 @@
     "ask": [
       "Exec(git commit)",
       "Exec(git push)",
+      "Exec(gh pr merge)",
       "Exec(git reset)",
       "Exec(git clean)",
       "Exec(git restore)",

@@ -1,403 +1,282 @@
 #!/bin/bash
-# hooks/pr-mode.sh のテーブル駆動テスト
+# hooks/pr-mode.sh のテーブル駆動テスト（既定ブランチ保護方式）
 # 実行: bash .claude/tests/test-pr-mode.sh（run.sh からも呼ばれる）
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 HOOK="$HOOKS_DIR/pr-mode.sh"
-# セッション ID と一時パスに $$ を含める（同じテストが同時に走っても衝突しない）
-S_ON=test-prmode-on-$$
-S_OFF=test-prmode-off-$$
-S_OTHER=test-prmode-other-$$
-# フックは異常時に $HOME/.claude/pr-mode.log へ書く。壊れた入力や session_id 欠落のケースで本物のログを汚さないよう、
-# テスト中だけ HOME を一時ディレクトリに向ける（フックは HOME をログの場所にしか使わない。run.sh がテスト前後の行数で検査する）
+S=test-prmode-$$
+# フックは異常時に $HOME/.claude/pr-mode.log へ書く。本物のログを汚さないよう、
+# テスト中だけ HOME を一時ディレクトリに向ける（run.sh がテスト前後の行数で検査する）
 export HOME="$T/claude-prmode-home.$$"
 mkdir -p "$HOME/.claude"
-cleanup() { rm -f "$T"/claude-pr-mode-test-prmode-*-$$; rm -rf "$T"/claude-prmode-test-repo-*.$$ "$T"/claude-prmode-libless.$$ "$T"/claude-prmode-home.$$; }
+
+REPO_BASE="$T/claude-prmode-repos.$$"
+REPO_MAIN="$REPO_BASE/main"
+REPO_MASTER="$REPO_BASE/master"
+REPO_FEAT="$REPO_BASE/feat"
+REPO_TRUNK="$REPO_BASE/trunk"
+REPO_SEC="$REPO_BASE/secret"
+
+cleanup() {
+  rm -rf "$REPO_BASE" "$T/claude-prmode-libless.$$" "$HOME"
+}
 trap cleanup EXIT
 cleanup
 mkdir -p "$HOME/.claude"
 
-# PermissionRequest の判定を確認する: label expected session cmd [cwd]
-pr() { report "$1" "$2" "$(decision_of "$(run_hook "$HOOK" PermissionRequest "$3" "$4" "" "" "${5-/tmp}")")" "$4"; }
-# PreToolUse の判定を確認する
-pre() { report "$1" "$2" "$(decision_of "$(run_hook "$HOOK" PreToolUse "$3" "$4")")" "$4"; }
+git_init() { # dir branch
+  local dir="$1" branch="$2"
+  mkdir -p "$dir"
+  git init -q -b "$branch" "$dir" 2>/dev/null || {
+    git init -q "$dir"
+    git -C "$dir" checkout -q -b "$branch"
+  }
+}
+git_commit() { # dir message
+  git -C "$1" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -m "$2"
+}
 
-# ---- フラグを立てる（/pr 展開） ----
-run_hook "$HOOK" UserPromptExpansion "$S_ON" "" pr >/dev/null
-[ -f "$T/claude-pr-mode-$S_ON" ] && report flag-created yes yes "" || report flag-created yes no ""
+git_init "$REPO_MAIN" main
+git_init "$REPO_MASTER" master
+git_init "$REPO_FEAT" feat/x
+git_init "$REPO_TRUNK" trunk
+git_init "$REPO_SEC" feat/secret
+# origin/HEAD が main / master 以外を指すリポジトリ（保護ブランチは origin/HEAD に追従する）
+git -C "$REPO_TRUNK" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+
+pre() { report "$1" "$2" "$(decision_of "$(run_hook "$HOOK" PreToolUse "$S" "$3" "" "" "${4-/tmp}")")" "$3"; }
+perm() { report "$1" "$2" "$(decision_of "$(run_hook "$HOOK" PermissionRequest "$S" "$3" "" "" "${4-/tmp}")")" "$3"; }
 
 HD_BODY=$'gh pr create --title "t" --body "$(cat <<\'EOF\'\n## 概要\n- a && b || c; d | e\n- --force と -f を含む本文\n- it\'s a "quote"\nEOF\n)" --base main'
-HD_BODY2=$'gh pr create --base main --title "t" --body "$(cat <<\'EOF\'\nbody\nEOF\n)"'
 HD_COMMIT=$'git commit -m "$(cat <<\'EOF\'\nfeat: x\n\n- a && b\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)"'
 HD_DASH=$'git commit -F - <<-EOF\n\tmsg && x\n\tEOF'
 HD_TRAIL=$'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" && rm -rf ~/x'
-HD_TRAIL2=$'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)"\nrm -rf ~/x'
 
-echo "# A. /pr 中の自動許可（allow）"
-pr A01 allow "$S_ON" 'git commit -m "fix: x"'
-pr A02 allow "$S_ON" 'git push -u origin feat/x'
-pr A03 allow "$S_ON" "$HD_BODY"
-pr A04 allow "$S_ON" "$HD_BODY2"
-pr A05 allow "$S_ON" "$HD_COMMIT"
-pr A06 allow "$S_ON" "$HD_DASH"
-pr A07 allow "$S_ON" 'git commit -m "a && b; c | d > e"'
-pr A08 allow "$S_ON" "git commit -m 'it'\"'\"'s done'"
-pr A09 allow "$S_ON" 'git commit -m "it'"'"'s done"'
-pr A10 allow "$S_ON" 'gh pr create --fill'
-pr A11 allow "$S_ON" 'gh pr create -f'
-pr A12 allow "$S_ON" 'git commit -m "see <<EOF in docs"'
-pr A13 allow "$S_ON" 'git commit -m "a" -m "b"'
-pr A14 allow "$S_ON" 'gh pr create --title "t" --body-file /tmp/body.md'
-pr A15 allow "$S_ON" 'git push -u origin feat/x 2>&1'
-pr A16 allow "$S_ON" 'git commit -am "x"'
-pr A17 allow "$S_ON" 'git push --set-upstream origin feat/x'
-pr A18 allow "$S_ON" $'gh pr create --title "t" --body "$(cat <<\'END-OF-BODY\'\nbody\nEND-OF-BODY\n)"'
+echo "# A. 保護ブランチ以外の自動許可（PermissionRequest allow）"
+perm A01-commit-feat allow 'git commit -m "fix: x"' "$REPO_FEAT"
+perm A02-push-feat allow 'git push -u origin feat/x' "$REPO_FEAT"
+perm A03-push-explicit-ref allow 'git push origin HEAD:refs/heads/feat/x' "$REPO_MAIN"
+perm A04-push-similar-name allow 'git push origin feat/main-fix' "$REPO_MAIN"
+perm A05-push-named-branch allow 'git push origin feat' "$REPO_MAIN"
+perm A06-pr-create allow 'gh pr create --fill'
+perm A07-pr-edit allow 'gh pr edit 12 --title "t" --body "b"'
+perm A08-pr-new allow 'gh pr new --fill'
+perm A09-api-create allow 'gh api -X POST repos/o/r/pulls -f title=t'
+perm A10-api-edit allow 'gh api repos/o/r/pulls/12 -X PATCH -f title=x'
+perm A11-api-graphql-create allow 'gh api graphql -f query="mutation { createPullRequest(input: {}) { pullRequest { url } } }"'
+perm A12-heredoc-pr allow "$HD_BODY"
+perm A13-heredoc-commit allow "$HD_COMMIT" "$REPO_FEAT"
+perm A14-dash-heredoc allow "$HD_DASH" "$REPO_FEAT"
+perm A15-quoted-operators allow 'git commit -m "a && b; c | d > e"' "$REPO_FEAT"
+perm A16-base-main allow 'gh pr create --base "main" --title "t" --body "b"'
+perm A17-set-upstream allow 'git push --set-upstream origin feat/x' "$REPO_FEAT"
+perm A18-commit-am allow 'git commit -am "x"' "$REPO_FEAT"
+perm A19-literal-heredoc-doc allow 'git commit -m "see <<EOF in docs"' "$REPO_FEAT"
+perm A20-redirect-2>&1 allow 'git push -u origin feat/x 2>&1' "$REPO_FEAT"
+# 長いオプションを短いフラグの文字判定（f / d）に掛けない
+perm A21-push-follow-tags allow 'git push --follow-tags origin feat/x' "$REPO_FEAT"
+perm A22-push-signed allow 'git push --signed origin feat/x' "$REPO_FEAT"
+perm A23-push-dry-run allow 'git push --dry-run origin feat/x' "$REPO_FEAT"
+perm A24-push-recurse-submodules allow 'git push --recurse-submodules=on-demand origin feat/x' "$REPO_FEAT"
+# git commit の -m の値はオプションとして見ない
+perm A25-commit-message-dash allow 'git commit -m "- add x"' "$REPO_FEAT"
+perm A26-commit-two-messages-dash allow 'git commit -m "title" -m "- item"' "$REPO_FEAT"
 
-echo "# B. /pr 中でも確認ダイアログに落とす（none）"
-pr B01 none "$S_ON" "$HD_TRAIL"
-pr B02 none "$S_ON" "$HD_TRAIL2"
-pr B03 none "$S_ON" 'git commit -m "a" && rm -rf ~/x'
-pr B04 none "$S_ON" 'git commit -m "it'"'"'s" && rm -rf ~/x && echo "x'"'"'"'
-pr B05 none "$S_ON" $'git commit -m "a"\nrm -rf ~/x'
-pr B06 none "$S_ON" $'git push -u origin feat\ngh pr merge 1 --admin'
-pr B07 none "$S_ON" 'git commit -m "$(rm -rf ~/x)"'
-pr B08 none "$S_ON" 'git commit -m "x" $(rm -rf ~/x)'
-pr B09 none "$S_ON" 'git commit -m "x" `rm -rf ~/x`'
-pr B10 none "$S_ON" 'git commit -F <(rm -rf ~/x)'
-pr B11 none "$S_ON" 'git commit -m "x" > ~/.zshrc'
-pr B12 none "$S_ON" 'env GIT_AUTHOR_NAME=x git commit -m x'
-pr B13 none "$S_ON" 'git commit -m "unterminated'
-pr B14 none "$S_ON" 'git commit -m "x" ; git push origin +main'
-echo "#   force / 破壊的 push"
-pr B20 none "$S_ON" 'git push --force origin feat'
-pr B21 none "$S_ON" 'git push -f origin feat'
-pr B22 none "$S_ON" 'git push --force-with-lease=feat origin feat'
-pr B23 none "$S_ON" 'git push -fu origin feat'
-pr B24 none "$S_ON" 'git push -uf origin feat'
-pr B25 none "$S_ON" 'git push origin +feat/x:feat'
-pr B26 none "$S_ON" 'git push origin +HEAD'
-pr B27 none "$S_ON" 'git push --delete origin feat/x'
-pr B28 none "$S_ON" 'git push -d origin feat/x'
-pr B29 none "$S_ON" 'git push origin :feat/x'
-pr B30 none "$S_ON" 'git push --mirror origin'
-pr B31 none "$S_ON" 'git push --no-verify -u origin feat'
-echo "#   デフォルトブランチへの push"
-pr B40 none "$S_ON" 'git push -u origin main'
-pr B41 none "$S_ON" 'git push origin HEAD:main'
-pr B42 none "$S_ON" 'git push origin feat:master'
-pr B45 none "$S_ON" 'git push origin HEAD:refs/heads/main'
-pr B46 none "$S_ON" 'git push origin feat:refs/heads/master'
-pr B47 allow "$S_ON" 'git push origin HEAD:refs/heads/feat/x'
-pr B48 allow "$S_ON" 'git push origin feat/main-fix'
-echo "#   別リポジトリへの PR 作成"
-pr B49 none "$S_ON" 'gh pr create -R other/repo --title t --body b'
-pr B4A none "$S_ON" 'gh pr create --repo other/repo --fill'
-echo "#   gh pr のマージ先指定（--base \"main\"）は引用符付きでも自動承認する（main / master 宛の検査は git push / commit だけ）"
-pr B4B allow "$S_ON" 'gh pr create --base "main" --title "t" --body "b"'
-pr B4C allow "$S_ON" "gh pr create -B 'master' --fill"
-pr B4D allow "$S_ON" 'gh pr edit 12 --base "main"'
-pr B4E allow "$S_ON" 'gh pr new --base "main" --fill'
-pr B4F none "$S_ON" 'gh pr create "--base" main --fill'          # 引用符付きオプションは今までどおり落とす
-pr B4G none "$S_ON" 'gh pr create --base "main" -R other/repo --fill'
-echo "#   引用符付きオプション・変数入りの宛先"
-pr B70 none "$S_ON" 'git push origin "main"'
-pr B71 none "$S_ON" 'git commit -m x "--amend"'
-pr B72 none "$S_ON" 'git commit -m x "--no-verify"'
-pr B73 none "$S_ON" 'git push "--force" origin feat'
-pr B74 none "$S_ON" 'git push origin "$BRANCH"'
-pr B75 none "$S_ON" 'git push -u origin $BRANCH'
-pr B76 allow "$S_ON" 'git push -u origin "feat/x"'
-pr B77 allow "$S_ON" 'git commit -m "docs: --amend と --force の説明"'
-REPO_MAIN="$T/claude-prmode-test-repo-main.$$"; rm -rf "$REPO_MAIN"; git init -q -b main "$REPO_MAIN" 2>/dev/null || { git init -q "$REPO_MAIN"; git -C "$REPO_MAIN" checkout -q -b main; }
-pr B43 none "$S_ON" 'git push -u origin feat/x' "$REPO_MAIN"   # main をチェックアウト中のリポジトリから
-REPO_FEAT="$T/claude-prmode-test-repo-feat.$$"; rm -rf "$REPO_FEAT"; git init -q -b feat/x "$REPO_FEAT" 2>/dev/null || { git init -q "$REPO_FEAT"; git -C "$REPO_FEAT" checkout -q -b feat/x; }
-pr B44 allow "$S_ON" 'git push -u origin feat/x' "$REPO_FEAT"  # 作業ブランチ上なら許可
-echo "#   引用符で割ったオプション・宛先（作業ブランチ上のリポジトリでも落とす）"
-pr B78 none "$S_ON" 'git push --for"ce"' "$REPO_FEAT"
-pr B79 none "$S_ON" 'git push -"f"' "$REPO_FEAT"
-pr B7A none "$S_ON" 'git push origin ma"in"' "$REPO_FEAT"
-pr B7B none "$S_ON" "git push origin ma'in'" "$REPO_FEAT"
-pr B7C none "$S_ON" 'git commit -m x --am"end"'
-pr B7F none "$S_ON" 'git push origin "HEAD:main"' "$REPO_FEAT"
-pr B7G none "$S_ON" "git push -u origin 'master'" "$REPO_FEAT"
-echo "#   引用符の中で実行されるコマンド置換（バッククォート・非引用タグ HEREDOC）"
-pr B7D none "$S_ON" 'git commit -m "`rm -rf /`"'
-pr B7E none "$S_ON" $'git commit -m "$(cat <<EOF\nsubject $(rm -rf /x)\nEOF\n)"'
-rm -rf "$REPO_MAIN" "$REPO_FEAT"
-echo "#   hook 回避・履歴改変 commit"
-pr B50 none "$S_ON" 'git commit --no-verify -m x'
-pr B51 none "$S_ON" 'git commit -n -m x'
-pr B52 none "$S_ON" 'git commit --amend --no-edit'
-pr B53 none "$S_ON" 'git commit -an -m x'
-echo "#   HEREDOC の閉じ行にオプションを置く抜け道"
-pr B54 none "$S_ON" $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --amend'
-pr B55 none "$S_ON" $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --no-verify'
-pr B56 none "$S_ON" $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" -n'
-pr B57 none "$S_ON" $'git push origin "$(cat <<\'EOF\'\nfeat\nEOF\n)" --force'
-pr B58 none "$S_ON" $'git push origin "$(cat <<\'EOF\'\nfeat\nEOF\n)" main'
-pr B59 allow "$S_ON" $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)" --no-edit'
-echo "#   対象外のコマンド"
-pr B60 none "$S_ON" 'gh pr merge 1'
-pr B61 none "$S_ON" 'git commit-tree HEAD^{tree} -m x'
-pr B62 none "$S_ON" 'git pushx'
-pr B63 none "$S_ON" 'ls'
+echo "# B. 自動許可しない（PermissionRequest）"
+perm B01-force deny 'git push --force origin feat' "$REPO_FEAT"
+perm B02-push-main deny 'git push -u origin main' "$REPO_MAIN"
+perm B03-delete deny 'git push --delete origin feat/x' "$REPO_FEAT"
+perm B04-all deny 'git push --all origin' "$REPO_FEAT"
+perm B05-merge none 'gh pr merge 1'
+perm B06-api-merge none 'gh api -X PUT repos/o/r/pulls/12/merge'
+perm B07-amend none 'git commit --amend --no-edit' "$REPO_FEAT"
+perm B08-noverify none 'git commit --no-verify -m x' "$REPO_FEAT"
+perm B09-vars none 'git push origin "$BRANCH"' "$REPO_FEAT"
+perm B10-compound none 'git commit -m "a" && rm -rf ~/x' "$REPO_FEAT"
+perm B11-redirect none 'git commit -m "x" > ~/.zshrc' "$REPO_FEAT"
+perm B12-quoted-option none 'git commit -m x "--amend"' "$REPO_FEAT"
+perm B13-repo-option none 'gh pr create -R other/repo --fill'
+perm B14-api-get none 'gh api repos/o/r/pulls/12'
+perm B15-push-HEAD-main deny 'git push origin HEAD:main' "$REPO_MAIN"
+perm B16-push-prune deny 'git push --prune origin feat/x' "$REPO_FEAT"
+perm B17-push-force-if-includes deny 'git push --force-if-includes origin feat/x' "$REPO_FEAT"
+# push 区間の外の引用トークン（PR の --base "main"）を既定ブランチ宛と誤認して deny しない
+perm B18-push-then-pr-base none 'git push -u origin feat/x && gh pr create --base "main" --title "x"' "$REPO_FEAT"
 
-echo "# C. /pr 外の拒否（PreToolUse deny）"
-pre C01 deny "$S_OFF" 'git commit -m x'
-pre C02 deny "$S_OFF" 'git push'
-pre C03 deny "$S_OFF" 'git push -u origin feat'
-pre C04 deny "$S_OFF" 'gh pr create --fill'
-pre C05 deny "$S_OFF" 'git -C . commit -m x'
-pre C06 deny "$S_OFF" 'git -c user.name=x commit -m x'
-pre C07 deny "$S_OFF" 'git  commit -m x'
-pre C08 deny "$S_OFF" 'command git commit -m x'
-pre C09 deny "$S_OFF" '/usr/bin/git commit -m x'
-pre C10 deny "$S_OFF" 'env X=1 git commit -m x'
-pre C11 deny "$S_OFF" 'GIT_DIR=.git git commit -m x'
-pre C12 deny "$S_OFF" 'cd /tmp && git commit -m x'
-pre C13 deny "$S_OFF" 'git add . ; git commit -m x'
-pre C14 deny "$S_OFF" 'bash -c "git commit -m x"'
-pre C15 deny "$S_OFF" 'eval "git push"'
-pre C16 deny "$S_OFF" 'gh api -X POST repos/o/r/pulls -f title=t'
-pre C17 deny "$S_OFF" 'git -C . push origin main'
-pre C18 deny "$S_OFF" "$HD_COMMIT"
-pre C19 deny "$S_OFF" $'git status\ngit commit -m x'
-pre C20 deny "$S_OFF" 'git --no-pager commit -m x'
-pre C21 deny "$S_OFF" $'git \\\ncommit -m x'
-pre C22 deny "$S_OFF" $'git push \\\n  -u origin feat'
-pre C23 deny "$S_OFF" 'git push;'
-pre C24 deny "$S_OFF" '(git push)'
-pre C25 deny "$S_OFF" 'true && { git push; }'
-pre C26 deny "$S_OFF" 'git push 2>&1 | tail -1'
-pre C27 deny "$S_OFF" 'gh api repos/o/r/pulls -f title=t -f head=x -f base=main'
-pre C28 deny "$S_OFF" 'gh api --method POST repos/o/r/pulls --input body.json'
-pre C29 deny "$S_OFF" 'gh api graphql -f query="mutation { createPullRequest(input: {}) { pullRequest { url } } }"'
-pre C2A deny "$S_OFF" "gh api graphql -f query='mutation { createPullRequest(input:{}) { clientMutationId } }'"
-echo "#   エイリアス回避の \\（\\git / \\gh）"
-pre C2B deny "$S_OFF" '\git commit -m x'
-pre C2C deny "$S_OFF" '\git push --force'
-pre C2D deny "$S_OFF" '\gh pr create --title x'
-pre C2E deny "$S_OFF" 'command \git commit -m x'
-echo "#   無害なコマンドは拒否しない（none）"
-pre C60 none "$S_OFF" 'gh api repos/o/r/pulls/1/comments'
-pre C61 none "$S_OFF" 'gh api repos/o/r/pulls --jq .[].number'
-pre C62 none "$S_OFF" 'gh api repos/o/r/pulls -X GET -f state=open'
-pre C63 none "$S_OFF" 'grep -rn "eval" src && git log --grep "git commit"'
-pre C64 none "$S_OFF" 'python eval.py && git log --grep "git push"'
-pre C65 none "$S_OFF" 'gh pr comment 1 --body "git push 済み"'
-pre C66 none "$S_OFF" 'ssh -c aes256-ctr host "git push"'
-pre C67 none "$S_OFF" 'grep -rn createPullRequest .claude/hooks/'   # gh api / graphql の文脈にない語は拒否しない
-echo "#   区切りなしリダイレクト・HEREDOC / パイプでシェルに流す形・閉じない HEREDOC"
-pre C70 deny "$S_OFF" 'git push>/dev/null'
-pre C71 deny "$S_OFF" $'bash <<\'EOF\'\ngit push origin main\nEOF'
-pre C72 deny "$S_OFF" "printf 'git push' | bash"
-pre C73 deny "$S_OFF" 'echo "git push" | sh'
-pre C74 none "$S_OFF" $'cat > deploy.sh <<\'EOF\'\ngit push\nEOF\nchmod +x deploy.sh'
-pre C75 none "$S_OFF" 'git log --oneline # git push 前の確認'
-pre C76 deny "$S_OFF" $'cat <<EOF2\nfoo\nEOF\ngit push origin main'
-pre C77 deny "$S_OFF" 'echo "a $(echo $(echo x)) b" && git push'
-pre C78 none "$S_OFF" 'echo "a $(echo $(echo x)) b" && git status'
-pre C79 none "$S_OFF" 'gh api repos/o/r/pulls/1/comments -f body=LGTM'
-echo "#   strip に失敗したとき（awk が無い）は生文字列で判定する（fail-open にしない）"
-LIBLESS="$T/claude-prmode-libless.$$"; mkdir -p "$LIBLESS/lib"; cp "$HOOK" "$LIBLESS/pr-mode.sh"; cp "$HOOKS_DIR/lib/git-write.sh" "$LIBLESS/lib/"
-out=$(payload PreToolUse "$S_OFF" 'git commit -m x' | bash "$LIBLESS/pr-mode.sh" 2>/dev/null); report C80-no-awk-deny deny "$(decision_of "$out")" ""
-out=$(payload PreToolUse "$S_OFF" 'git status' | bash "$LIBLESS/pr-mode.sh" 2>/dev/null); report C81-no-awk-none none "$(decision_of "$out")" ""
-rm -rf "$LIBLESS"
-pre C30 none "$S_OFF" "git log --grep 'git commit' --oneline"
-pre C31 none "$S_OFF" 'grep -rn "git push" README.md'
-pre C32 none "$S_OFF" 'echo "git commit"'
-pre C33 none "$S_OFF" $'cat > deploy.sh <<\'EOF\'\ngit push origin main\nEOF'
-pre C34 none "$S_OFF" 'git commit-tree HEAD^{tree} -m x'
-pre C35 none "$S_OFF" 'gh pr merge 1'
-pre C36 none "$S_OFF" 'gh pr view 1'
-pre C37 none "$S_OFF" 'git status'
-pre C38 none "$S_OFF" 'git log --format=%s | grep -c "git push"'
-pre C39 none "$S_OFF" 'git config alias.ci commit'
-echo "#   /pr 中は PreToolUse は何も出さない（ask ルール→PermissionRequest に委ねる）"
-pre C40 none "$S_ON" 'git commit -m x'
-echo "#   PermissionRequest 側の deny（二重化）"
-pr C50 deny "$S_OFF" 'git commit -m x'
-pr C51 none "$S_OFF" 'git status'
+echo "# C. 既定ブランチへの commit / push は常に deny（PreToolUse）"
+pre C01-commit-main deny 'git commit -m x' "$REPO_MAIN"
+pre C02-commit-master deny 'git commit -m x' "$REPO_MASTER"
+pre C03-commit-origin-head deny 'git commit -m x' "$REPO_TRUNK"
+pre C04-push-none-main deny 'git push' "$REPO_MAIN"
+pre C05-push-origin-main deny 'git push origin' "$REPO_MAIN"
+pre C06-push-u-origin-main deny 'git push -u origin' "$REPO_MAIN"
+pre C07-push-HEAD-main deny 'git push origin HEAD' "$REPO_MAIN"
+pre C08-push-main deny 'git push origin main' "$REPO_MAIN"
+pre C09-push-HEAD-colon-main deny 'git push origin HEAD:main' "$REPO_MAIN"
+pre C10-push-feat-colon-master deny 'git push origin feat:master' "$REPO_MAIN"
+pre C11-push-refs-heads-main deny 'git push origin HEAD:refs/heads/main' "$REPO_MAIN"
+pre C12-push-refs-heads-master deny 'git push origin feat:refs/heads/master' "$REPO_MAIN"
+pre C13-push-plus-main deny 'git push origin +main' "$REPO_MAIN"
+pre C14-push-quoted-main deny 'git push origin "main"' "$REPO_MAIN"
+pre C15-push-single-quoted-main deny "git push origin 'master'" "$REPO_MAIN"
+pre C16-push-all deny 'git push --all origin' "$REPO_FEAT"
+pre C17-push-mirror deny 'git push --mirror origin' "$REPO_FEAT"
+pre C18-push-delete deny 'git push --delete origin feat/x' "$REPO_FEAT"
+pre C19-push-d deny 'git push -d origin feat/x' "$REPO_FEAT"
+pre C20-push-colon-branch deny 'git push origin :feat/x' "$REPO_FEAT"
+pre C21-push-noverify deny 'git push --no-verify -u origin feat/x' "$REPO_FEAT"
+pre C22-force deny 'git push --force origin feat' "$REPO_FEAT"
+pre C23-force-with-lease deny 'git push --force-with-lease=feat origin feat' "$REPO_FEAT"
+pre C24-force-short deny 'git push -f origin feat' "$REPO_FEAT"
+pre C25-force-combined deny 'git push -fu origin feat' "$REPO_FEAT"
+pre C26-push-trunk deny 'git push origin HEAD:trunk' "$REPO_TRUNK"
+pre C27-push-follow-tags-main deny 'git push --follow-tags' "$REPO_MAIN"
+pre C28-push-prune deny 'git push --prune origin feat/x' "$REPO_FEAT"
+out=$(run_hook "$HOOK" PreToolUse "$S" 'git push --prune origin feat/x' "" "" "$REPO_FEAT")
+r=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
+case "$r" in *'削除'*) v=ok ;; *) v="理由文が削除扱いでない: $r" ;; esac
+report C29-push-prune-reason ok "$v" "$r"
 
-echo "# D. フラグの寿命"
-S=test-prmode-life-$$
-F="$T/claude-pr-mode-$S"
-# 展開後の本文は SKILL.md の最初の "# " 行で見分ける（フックと同じ解決方法。読めなければ同じフォールバック）。
-# 上の libless コピーはこの相対パスの先に SKILL.md が無いので、フォールバックのリテラルが使われる
-PR_SKILL="$(dirname "$(readlink -f "$HOOK" 2>/dev/null || printf '%s' "$HOOK")")/../skills/pr/SKILL.md"
-PR_H1=$(grep -m1 '^# ' "$PR_SKILL" 2>/dev/null)
-[ -n "$PR_H1" ] || { echo "  NG [D00] skills/pr/SKILL.md の H1 が読めません（フックはこの見出しで /pr の展開本文を見分ける）"; FAIL=$((FAIL+1)); }
-run_hook "$HOOK" UserPromptExpansion "$S" "" pr >/dev/null;      [ -f "$F" ] && r=yes || r=no; report D01-expansion-pr yes "$r" ""
-run_hook "$HOOK" UserPromptExpansion "$S" "" readme >/dev/null;  [ -f "$F" ] && r=yes || r=no; report D02-expansion-other no "$r" ""
-run_hook "$HOOK" UserPromptExpansion "$S" "" pr >/dev/null
-run_hook "$HOOK" UserPromptSubmit "$S" "" "" "/pr" >/dev/null;   [ -f "$F" ] && r=yes || r=no; report D03-submit-/pr yes "$r" ""
-run_hook "$HOOK" UserPromptSubmit "$S" "" "" "$PR_H1"$'\n\n現在の作業内容をコミットし…' >/dev/null; [ -f "$F" ] && r=yes || r=no; report D04-submit-expanded yes "$r" "$PR_H1"
-# 見出しが違えば /pr の展開本文ではないのでフラグは消える
-run_hook "$HOOK" UserPromptSubmit "$S" "" "" $'# 別の見出し\n\n現在の作業内容をコミットし…' >/dev/null; [ -f "$F" ] && r=yes || r=no; report D04b-submit-other-h1 no "$r" ""
-# フックの隣に skills/pr/SKILL.md が無い（見出しが読めない）場合は、展開本文でもフラグを消す（fail-closed。フォールバックのリテラルは持たない）
-NOSKILL="$T/claude-prmode-noskill.$$"; mkdir -p "$NOSKILL/lib"; cp "$HOOK" "$NOSKILL/pr-mode.sh"; cp "$HOOKS_DIR/lib/strip-shell.awk" "$HOOKS_DIR/lib/git-write.sh" "$NOSKILL/lib/"
-touch "$F"; run_hook "$NOSKILL/pr-mode.sh" UserPromptSubmit "$S" "" "" "$PR_H1"$'\n\n現在の作業内容をコミットし…' >/dev/null; [ -f "$F" ] && r=yes || r=no; report D04c-submit-no-skill-md no "$r" ""
-rm -rf "$NOSKILL"
-run_hook "$HOOK" UserPromptExpansion "$S" "" pr >/dev/null
-run_hook "$HOOK" UserPromptSubmit "$S" "" "" "/pr 引数つき" >/dev/null; [ -f "$F" ] && r=yes || r=no; report D05-submit-/pr-args yes "$r" ""
-run_hook "$HOOK" UserPromptSubmit "$S" "" "" "別の作業をして" >/dev/null; [ -f "$F" ] && r=yes || r=no; report D06-submit-other no "$r" ""
-run_hook "$HOOK" UserPromptExpansion "$S" "" pr >/dev/null
-run_hook "$HOOK" UserPromptSubmit "$S" "" "" "/prune してほしい" >/dev/null; [ -f "$F" ] && r=yes || r=no; report D07-submit-/prune no "$r" ""
-run_hook "$HOOK" UserPromptExpansion "$S" "" pr >/dev/null
-run_hook "$HOOK" Stop "$S" >/dev/null;                            [ -f "$F" ] && r=yes || r=no; report D08-stop no "$r" ""
-# 別セッションのフラグは効かない
-run_hook "$HOOK" UserPromptExpansion "$S" "" pr >/dev/null
-pr D09-other-session deny "$S_OTHER" 'git commit -m x'
-rm -f "$F"
+echo "# D. 対象リポジトリの解決（git -C / cd && / フォールバック）"
+pre D01-commit-gitc-main deny "git -C $REPO_MAIN commit -m x" /tmp
+pre D02-commit-gitc-feat none "git -C $REPO_FEAT commit -m x" /tmp
+pre D03-commit-cd-main deny "cd $REPO_MAIN && git commit -m x" /tmp
+pre D04-commit-cd-feat none "cd $REPO_FEAT && git commit -m x" /tmp
+pre D05-commit-cd-relative deny "cd main && git commit -m x" "$REPO_BASE"
+pre D06-commit-cd-semicolon deny "cd $REPO_MAIN; git commit -m x" /tmp
+pre D07-push-gitc-main deny "git -C $REPO_MAIN push" /tmp
+pre D08-push-cd-main deny "cd $REPO_MAIN && git push origin" /tmp
+pre D09-commit-cd-var-fallback deny 'cd "$VAR" && git commit -m x' "$REPO_MAIN"
+pre D10-commit-gitc-var-fallback deny 'git -C "$VAR" commit -m x' "$REPO_MAIN"
+pre D11-commit-gitc-var-feat none 'git -C "$VAR" commit -m x' "$REPO_FEAT"
+pre D12-commit-after-status deny "git -C $REPO_MAIN status; git -C $REPO_MAIN commit -m x" /tmp
+pre D13-commit-status-then-cwd deny "git -C $REPO_FEAT status; git commit -m x" "$REPO_MAIN"
+pre D14-commit-cd-overrides none "cd $REPO_FEAT && git commit -m x" "$REPO_MAIN"
+pre D15-push-explicit-main none 'git push origin feat' "$REPO_MAIN"
+pre D16-push-HEAD-feat none 'git push origin HEAD' "$REPO_FEAT"
+pre D17-push-similar-name none 'git push origin feat/main' "$REPO_FEAT"
+pre D18-commit-paren-main deny "(cd $REPO_MAIN && git commit -m x)" /tmp
+pre D19-commit-paren-feat none "(cd $REPO_FEAT && git commit -m x)" /tmp
+pre D20-commit-paren-relative-main deny "(cd main && git commit -m x)" "$REPO_BASE"
 
-echo "# E. 壊れた入力"
-out=$(printf 'not json' | bash "$HOOK" 2>/dev/null); rc=$?; report E01-garbage "0:" "$rc:$out" ""
-out=$(printf '' | bash "$HOOK" 2>/dev/null); rc=$?; report E02-empty "0:" "$rc:$out" ""
-# session_id の無い PreToolUse / PermissionRequest は「/pr 中と確認できない」ので拒否側で扱う
-# （フラグの所在が分からないまま素通しにする fail-open を避けるための意図的な仕様）
-out=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | bash "$HOOK" 2>/dev/null); rc=$?; report E03-no-session "0:deny" "$rc:$(decision_of "$out")" "$out"
-out=$(printf '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | bash "$HOOK" 2>/dev/null); rc=$?; report E03b-no-session-permreq "0:deny" "$rc:$(decision_of "$out")" "$out"
-out=$(printf '{"hook_event_name":"PreToolUse","session_id":"test-prmode-x","tool_name":"Edit","tool_input":{"file_path":"git commit"}}' | bash "$HOOK" 2>/dev/null); report E04-other-tool none "$(decision_of "$out")" ""
-# session_id 欠落のどのイベントでも、空サフィックス（$T/claude-pr-mode-）や "unknown" のフラグを作らない
-for ev in UserPromptExpansion UserPromptSubmit PreToolUse PermissionRequest Stop; do
-  jq -cn --arg e "$ev" '{hook_event_name:$e, tool_name:"Bash", command_name:"pr", prompt:"/pr", tool_input:{command:"git commit -m x"}}' \
-    | bash "$HOOK" >/dev/null 2>&1
-done
-r=absent
-[ -e "$T/claude-pr-mode-" ] && r="present（空サフィックス）"
-[ -e "$T/claude-pr-mode-unknown" ] && r="present（unknown）"
-report E05-no-stray-flag absent "$r" ""
-# 異常時のログは（隔離した）$HOME/.claude/pr-mode.log に書かれ、文言が文字化けしていない
-# （bash 5.3 は "$var）" のように変数展開の直後に全角文字が続くと ）の先頭バイトを落とすことがある。
-#   フックは ${var}） の形で書く。壊れると「イベント（��を無視」のようになる）
-[ -f "$HOME/.claude/pr-mode.log" ] && r=present || r=absent
-report E06-log-in-isolated-home present "$r" "$HOME/.claude/pr-mode.log"
-grep -qF 'session_id が無いイベント（）を無視しました' "$HOME/.claude/pr-mode.log" 2>/dev/null && r=ok || r="文言が一致しない: $(grep -a 'イベント' "$HOME/.claude/pr-mode.log" 2>/dev/null | tail -1)"
-report E07-log-message-not-garbled ok "$r" ""
-grep -qF 'session_id が無いイベント（Stop）を無視しました' "$HOME/.claude/pr-mode.log" 2>/dev/null && r=ok || r="文言が一致しない"
-report E07b-log-message-with-event ok "$r" ""
+echo "# E. サブエージェントからの git 書き込みは deny"
+out=$(jq -cn --arg s "$S" --arg d "$REPO_FEAT" '{hook_event_name:"PreToolUse",session_id:$s,cwd:$d,agent_id:"agent-1",tool_name:"Bash",tool_input:{command:"git commit -m x"}}' | bash "$HOOK" 2>/dev/null)
+report E01-subagent-commit deny "$(decision_of "$out")" "$out"
+out=$(jq -cn --arg s "$S" --arg d "$REPO_MAIN" '{hook_event_name:"PreToolUse",session_id:$s,cwd:$d,agent_id:"agent-1",tool_name:"Bash",tool_input:{command:"git push origin main"}}' | bash "$HOOK" 2>/dev/null)
+report E02-subagent-push-deny deny "$(decision_of "$out")" "$out"
+out=$(jq -cn --arg s "$S" --arg d "$REPO_FEAT" '{hook_event_name:"PreToolUse",session_id:$s,cwd:$d,agent_id:"agent-1",tool_name:"Bash",tool_input:{command:"git status"}}' | bash "$HOOK" 2>/dev/null)
+report E03-subagent-readonly none "$(decision_of "$out")" "$out"
 
-echo "# F. gh pr new / gh pr edit（PR の更新）"
-pr F01 allow "$S_ON" 'gh pr edit 12 --title "t" --body "b"'
-pr F02 allow "$S_ON" 'gh pr new --fill'
-pr F03 none "$S_ON" 'gh pr edit 12 -R other/repo --title t'
-pr F04 none "$S_ON" 'gh pr edit 12 --repo other/repo --body b'
-pre F05 deny "$S_OFF" 'gh pr edit 12 --body b'
-pre F06 deny "$S_OFF" 'gh pr new --fill'
-pre F07 deny "$S_OFF" '\gh pr edit 12 --title x'
-pre F08 none "$S_OFF" 'gh pr view 12 --json body'
-pre F09 none "$S_OFF" 'gh pr list --state open'
+echo "# F. 確認ダイアログ（PreToolUse ask）"
+pre F01-merge ask 'gh pr merge 1'
+pre F02-api-merge-put ask 'gh api -X PUT repos/o/r/pulls/12/merge'
+pre F03-api-merge-method ask 'gh api --method PUT repos/o/r/pulls/12/merge'
+pre F04-graphql-merge ask 'gh api graphql -f query="mutation { mergePullRequest(input:{}) { clientMutationId } }"'
+pre F05-amend ask 'git commit --amend --no-edit' "$REPO_FEAT"
+pre F06-noverify ask 'git commit --no-verify -m x' "$REPO_FEAT"
+pre F07-n ask 'git commit -n -m x' "$REPO_FEAT"
+pre F08-quoted-amend ask 'git commit -m x "--amend"' "$REPO_FEAT"
+pre F09-vars ask 'git push origin "$BRANCH"' "$REPO_FEAT"
+pre F10-vars-unquoted ask 'git push -u origin $BRANCH' "$REPO_FEAT"
+pre F11-wildcard ask "git push origin 'refs/heads/*:refs/heads/*'" "$REPO_FEAT"
 
-echo "# G. HEREDOC でスクリプトを書き出すだけのコマンドは拒否しない（本文は実行されない）"
-pre G01 none "$S_OFF" $'cat > /tmp/x.sh <<\'EOF\'\neval "set -- $fields"\ncase $c in *"git commit"*) ;; esac\nEOF\nchmod +x /tmp/x.sh'
-pre G02 none "$S_OFF" $'cat > /tmp/x.sh <<\'EOF\'\n# bash -c "git push" の例\nEOF'
-pre G03 none "$S_OFF" $'cat > /tmp/x.sh <<\'EOF\'\neval "x"\ngh pr edit 1 --body b\nEOF'
-# シェルに流す HEREDOC・パイプは本文そのものが実行されるので従来どおり deny
-pre G04 deny "$S_OFF" $'bash <<\'EOF\'\ngit push origin main\nEOF'
-pre G05 deny "$S_OFF" 'bash -c "git commit -m x"'
-pre G06 deny "$S_OFF" "printf 'git push' | bash"
+echo "# G. 保護ブランチ以外は PreToolUse では何も出さない（PermissionRequest に委ねる）"
+pre G01-commit-feat none 'git commit -m x' "$REPO_FEAT"
+pre G02-push-feat none 'git push -u origin feat/x' "$REPO_FEAT"
+pre G03-push-explicit-ref none 'git push origin HEAD:refs/heads/feat/x' "$REPO_MAIN"
+pre G04-pr-create none 'gh pr create --fill'
+pre G05-api-create none 'gh api -X POST repos/o/r/pulls -f title=t'
+pre G06-status none 'git status'
+pre G07-log-grep none 'git log --grep "git commit" --oneline'
+pre G08-echo none 'echo "git commit"'
+pre G09-commit-tree none 'git commit-tree HEAD^{tree} -m x'
+pre G10-pushx none 'git pushx'
+pre G11-pr-view none 'gh pr view 12'
+pre G12-cat-heredoc none $'cat > deploy.sh <<\'EOF\'\ngit push origin main\nEOF'
+pre G13-quoted-message none 'git commit -m "docs: --amend and --force"'
+pre G14-heredoc-trailing none "$HD_TRAIL" "$REPO_FEAT"
+# git commit の -m の値・commit 区間の外の -n を ask にしない
+pre G15-commit-message-dash none 'git commit -m "- add x"' "$REPO_FEAT"
+pre G16-commit-two-messages-dash none 'git commit -m "title" -m "- item"' "$REPO_FEAT"
+pre G17-grep-n-commit none 'grep -n foo x && git commit -m x' "$REPO_FEAT"
+# push 区間の外の引用トークン（PR の --base "main"）を push の宛先と誤認しない
+pre G18-push-then-pr-base none 'git push -u origin feat/x && gh pr create --base "main" --title "x"' "$REPO_FEAT"
 
-echo "# H. /pr 中のサブエージェント・秘密情報"
-# サブエージェント（入力に agent_id）からの git 書き込みは /pr 中でも deny
-out=$(jq -cn --arg s "$S_ON" '{hook_event_name:"PreToolUse",session_id:$s,cwd:"/tmp",agent_id:"agent-1",tool_name:"Bash",tool_input:{command:"git commit -m x"}}' | bash "$HOOK" 2>/dev/null)
-report H01-subagent-deny deny "$(decision_of "$out")" "$out"
-out=$(jq -cn --arg s "$S_ON" '{hook_event_name:"PreToolUse",session_id:$s,cwd:"/tmp",agent_id:"agent-1",tool_name:"Bash",tool_input:{command:"git status"}}' | bash "$HOOK" 2>/dev/null)
-report H02-subagent-readonly none "$(decision_of "$out")" "$out"
-# ステージ済みの差分に既知のトークン形式があるコミットは自動承認しない（PreToolUse は理由つき ask）。
-# 実物のトークン形式をこのファイルに残さないよう、値は実行時に組み立てる
-REPO_SEC="$T/claude-prmode-secret-repo.$$"; rm -rf "$REPO_SEC"
-git init -q "$REPO_SEC" 2>/dev/null
-TOK="ghp_$(printf 'A%.0s' $(seq 36))"
-printf 'token = "%s"\n' "$TOK" > "$REPO_SEC/leak.txt"
+echo "# H. gh api の /pulls 書き込み（マージ以外）は自動許可、読み取り・マージは対象外"
+pre H01-braces none '{ gh api repos/o/r/pulls -f title=x; }'
+perm H02-braces none '{ gh api repos/o/r/pulls -f title=x; }'
+pre H03-xargs none 'echo x | xargs gh api repos/o/r/pulls -f title=x'
+perm H04-xargs none 'echo x | xargs gh api repos/o/r/pulls -f title=x'
+perm H05-timeout allow 'timeout 60 gh api repos/o/r/pulls -f title=x'
+perm H06-get none 'gh api repos/o/r/pulls -X GET -f state=open'
+perm H07-merge-get none 'gh api repos/o/r/pulls/12/merge -X GET'
+pre H08-merge-get none 'gh api repos/o/r/pulls/12/merge -X GET'
+
+echo "# I. 秘密情報・- a の検査（自動承認しない）"
+printf 'token = "%s"\n' "ghp_$(printf 'A%.0s' $(seq 36))" > "$REPO_SEC/leak.txt"
 printf 'ok\n' > "$REPO_SEC/clean.txt"
 git -C "$REPO_SEC" add clean.txt 2>/dev/null
-out=$(run_hook "$HOOK" PreToolUse "$S_ON" 'git commit -m "add"' "" "" "$REPO_SEC")
-report H03-clean-commit none "$(decision_of "$out")" "$out"
+pre I01-clean none 'git commit -m "add"' "$REPO_SEC"
 git -C "$REPO_SEC" add leak.txt 2>/dev/null
-out=$(run_hook "$HOOK" PreToolUse "$S_ON" 'git commit -m "add"' "" "" "$REPO_SEC")
-report H04-secret-ask ask "$(decision_of "$out")" "$out"
-out=$(run_hook "$HOOK" PermissionRequest "$S_ON" 'git commit -m "add"' "" "" "$REPO_SEC")
-report H05-secret-no-auto-allow none "$(decision_of "$out")" "$out"
-# 理由文にファイル名と形式名がそのまま入る（文字化けしない）
+pre I02-secret-ask ask 'git commit -m "add"' "$REPO_SEC"
+perm I03-secret-no-allow none 'git commit -m "add"' "$REPO_SEC"
+out=$(run_hook "$HOOK" PreToolUse "$S" 'git commit -m "add"' "" "" "$REPO_SEC")
 r=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
-out2=$(run_hook "$HOOK" PreToolUse "$S_ON" 'git commit -m "add"' "" "" "$REPO_SEC")
-r=$(printf '%s' "$out2" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
 case "$r" in *'leak.txt（GitHub トークン）'*) v=ok ;; *) v="理由文が一致しない: $r" ;; esac
-report H06-secret-reason ok "$v" "$r"
-# 2 件以上でも「、」で連結される（paste のバイト単位の区切りでの文字化け検出）
-TOK2="sk-ant-$(printf 'B%.0s' $(seq 24))"
-printf 'key = "%s"\n' "$TOK2" > "$REPO_SEC/leak2.txt"
+report I04-secret-reason ok "$v" "$r"
+printf 'key = "%s"\n' "sk-ant-$(printf 'B%.0s' $(seq 24))" > "$REPO_SEC/leak2.txt"
 git -C "$REPO_SEC" add leak2.txt 2>/dev/null
-out2=$(run_hook "$HOOK" PreToolUse "$S_ON" 'git commit -m "add"' "" "" "$REPO_SEC")
-r=$(printf '%s' "$out2" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
+out=$(run_hook "$HOOK" PreToolUse "$S" 'git commit -m "add"' "" "" "$REPO_SEC")
+r=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
 case "$r" in *'leak.txt（GitHub トークン）、leak2.txt（Anthropic API キー）'*) v=ok ;; *) v="連結が壊れている: $r" ;; esac
-report H07-secret-reason-joined ok "$v" "$r"
+report I05-secret-reason-joined ok "$v" "$r"
 # -a 付きコミットは未ステージの変更（git diff HEAD）も検査する
 printf 'npm_%s\n' "$(printf 'C%.0s' $(seq 36))" > "$REPO_SEC/unstaged.txt"
 git -C "$REPO_SEC" add unstaged.txt 2>/dev/null
-# HOME を隔離しているので、コミットには identity を明示的に渡す
-git -C "$REPO_SEC" -c user.name=test -c user.email=test@example.com commit -q -m init 2>/dev/null
+git_commit "$REPO_SEC" init
 printf 'npm_%s\n' "$(printf 'D%.0s' $(seq 36))" >> "$REPO_SEC/unstaged.txt"
-out2=$(run_hook "$HOOK" PreToolUse "$S_ON" 'git commit -am "x"' "" "" "$REPO_SEC")
-report H08-secret-commit-a ask "$(decision_of "$out2")" "$out2"
-out2=$(run_hook "$HOOK" PreToolUse "$S_ON" 'git commit -m "x"' "" "" "$REPO_SEC")
-report H09-unstaged-not-checked none "$(decision_of "$out2")" "ステージしていない変更は -a が無ければ見ない"
-rm -rf "$REPO_SEC"
+pre I06-secret-commit-a ask 'git commit -am "x"' "$REPO_SEC"
+pre I07-unstaged-not-checked none 'git commit -m "x"' "$REPO_SEC"
 
-# PR 番号を指定した更新も共通の Git 書き込み判定に含める。
-pre I01-api-update deny "$S_OFF" 'gh api repos/o/r/pulls/12 -X PATCH -f title=x'
-pre I02-api-get none "$S_OFF" 'gh api repos/o/r/pulls/12'
-pre I03-api-quoted-update deny "$S_OFF" 'gh api "repos/o/r/pulls/12" -X "PATCH" -f title=x'
-pre I04-api-quoted-create deny "$S_OFF" 'gh api "repos/o/r/pulls" -X POST -f title=x'
-pre I05-api-quoted-get none "$S_OFF" 'gh api "repos/o/r/pulls/12" -X "GET"'
-pre I06-api-literal deny "$S_OFF" 'echo gh api "repos/o/r/pulls/12" -X PATCH -f title=x'   # echo の引数のような文字列も書き込み扱い（単純化のため許容）
-pre I07-api-read-and-literal deny "$S_OFF" 'gh api repos/o/r/pulls/12; echo gh api repos/o/r/pulls/12 -X PATCH'   # echo の引数のような文字列も書き込み扱い（単純化のため許容）
-pre I08-api-braces deny "$S_OFF" '{ gh api repos/o/r/pulls -f title=x; }'
-pre I09-api-then deny "$S_OFF" 'if true; then gh api repos/o/r/pulls -f title=x; fi'
-pre I10-api-do deny "$S_OFF" 'for i in 1; do gh api repos/o/r/pulls -f title=x; done'
-pre I11-api-negation deny "$S_OFF" '! gh api repos/o/r/pulls -f title=x'
-pre I12-api-xargs deny "$S_OFF" 'echo x | xargs gh api repos/o/r/pulls -f title=x'
-pre I13-api-else deny "$S_OFF" 'if false; then true; else gh api repos/o/r/pulls -f title=x; fi'
-pre I14-api-elif deny "$S_OFF" 'if false; then true; elif gh api repos/o/r/pulls -f title=x; then true; fi'
-pre I15-api-if deny "$S_OFF" 'if gh api repos/o/r/pulls -f title=x; then true; fi'
-pre I16-api-while deny "$S_OFF" 'while gh api repos/o/r/pulls -f title=x; do break; done'
-pre I17-api-until deny "$S_OFF" 'until gh api repos/o/r/pulls -f title=x; do break; done'
-pre I18-api-braces-get none "$S_OFF" '{ gh api repos/o/r/pulls -X GET -f state=open; }'
-pre I19-api-xargs-comments none "$S_OFF" 'echo x | xargs gh api repos/o/r/pulls/12/comments -f body=LGTM'
-pre I20-api-heredoc-literal none "$S_OFF" $'cat <<\'EOF\'\n{ gh api repos/o/r/pulls -f title=x; }\nEOF'
-pre I21-api-xargs-flags deny "$S_OFF" 'echo x | xargs -r -0 gh api repos/o/r/pulls -f title=x'
-pre I22-api-xargs-attached-count deny "$S_OFF" 'echo x | xargs -n1 gh api repos/o/r/pulls -f title=x'
-pre I23-api-xargs-attached-replace deny "$S_OFF" 'echo x | xargs -I{} gh api repos/o/r/pulls -f title=x'
-pre I24-api-xargs-count deny "$S_OFF" 'echo x | xargs -n 1 gh api repos/o/r/pulls -f title=x'
-pre I25-api-xargs-replace deny "$S_OFF" 'echo x | xargs -I {} gh api repos/o/r/pulls -f title=x'
-pre I26-api-xargs-parallel deny "$S_OFF" 'echo x | xargs -P 4 gh api repos/o/r/pulls -f title=x'
-pre I27-api-xargs-long-option deny "$S_OFF" 'echo x | xargs --max-args 1 gh api repos/o/r/pulls -f title=x'
-pre I28-api-xargs-end-options deny "$S_OFF" 'echo x | xargs -- gh api repos/o/r/pulls -f title=x'
-pre I29-api-xargs-option-get none "$S_OFF" 'echo x | xargs -r -n 1 gh api repos/o/r/pulls -X GET -f state=open'
-pre I30-api-xargs-option-comments none "$S_OFF" 'echo x | xargs -I{} gh api repos/o/r/pulls/12/comments -f body=LGTM'
-pre I31-api-xargs-command-boundary deny "$S_OFF" 'echo x | xargs -n 1 echo example; echo gh api repos/o/r/pulls -f title=x'   # echo の引数のような文字列も書き込み扱い（単純化のため許容）
-pre I32-api-xargs-combined-next deny "$S_OFF" 'echo x | xargs -rn 1 gh api repos/o/r/pulls -f title=x'
-pre I33-api-xargs-combined-attached deny "$S_OFF" 'echo x | xargs -r0n1 gh api repos/o/r/pulls -f title=x'
-pre I34-api-xargs-combined-options deny "$S_OFF" 'echo x | xargs -0n 1 -P 4 gh api repos/o/r/pulls -f title=x'
-pre I35-api-xargs-combined-get none "$S_OFF" 'echo x | xargs -rn 1 gh api repos/o/r/pulls -X GET -f state=open'
-# 改行はコマンド境界、行継続は同じコマンド、引用内改行は引数として扱う。
-pre J01-api-newline-write deny "$S_OFF" $'git status\ngh api "repos/o/r/pulls/12" -X PATCH -f title=x'
-pre J02-api-newline-literal deny "$S_OFF" $'gh api repos/o/r/pulls/12\necho gh api repos/o/r/pulls/12 -X PATCH'   # echo の引数のような文字列も書き込み扱い（単純化のため許容）
-pre J03-api-continuation deny "$S_OFF" $'gh api "repos/o/r/pulls/12" \\\n-X "PATCH" -f title=x'
-pre J04-api-multiline-echo none "$S_OFF" $'echo "PRの説明\ngh api repos/o/r/pulls/12 -X PATCH"'
-pre J05-api-multiline-body none "$S_OFF" $'gh api repos/o/r/pulls/12 -X GET -f body="利用例\ngh api repos/o/r/pulls/12 -X PATCH"'
-# 前置き語（timeout / nix develop -c 等）を問わず、引用値の括弧は区切りにしない。区切りの後の語は別の区間として見る。
-pre K01-api-timeout deny "$S_OFF" 'timeout 60 gh api repos/o/r/pulls -f title=x'
-pre K02-api-nix-develop deny "$S_OFF" 'nix develop -c gh api repos/o/r/pulls -f title=x'
-pre K03-api-direnv-exec deny "$S_OFF" 'direnv exec . gh api repos/o/r/pulls -f title=x'
-pre K04-api-env-unset deny "$S_OFF" 'env -u GITHUB_TOKEN gh api repos/o/r/pulls -f title=x'
-pre K05-api-nice deny "$S_OFF" 'nice gh api repos/o/r/pulls -f title=x'
-pre K06-api-backquote deny "$S_OFF" 'echo `gh api repos/o/r/pulls -f title=x`'
-pre K07-api-quoted-paren-double deny "$S_OFF" 'gh api -X POST -f title="feat(hooks): x" -f head=feat -f base=main repos/o/r/pulls'
-pre K08-api-quoted-paren-single deny "$S_OFF" "gh api -f title='fix(ci): x' repos/o/r/pulls"
-pre K09-api-quoted-paren-get none "$S_OFF" 'gh api repos/o/r/pulls/12 -f body="x (y)" -X GET'
-pre K10-api-semicolon-boundary none "$S_OFF" 'gh api repos/o/r/pulls/12; echo -X PATCH'
-pre K11-api-newline-boundary none "$S_OFF" $'gh api repos/o/r/pulls/12\necho -X PATCH'
-pre K12-api-subst-body-before-endpoint deny "$S_OFF" 'gh api -X POST -f title=x -f body="$(cat body.md)" repos/o/r/pulls'
-pre K13-api-subst-body-get none "$S_OFF" 'gh api repos/o/r/pulls/12 -f body="$(date)" -X GET'
+echo "# J. 壊れた入力・ログ・フラグを作らない"
+out=$(printf 'not json' | bash "$HOOK" 2>/dev/null); rc=$?
+report J01-garbage "0:" "$rc:$out" ""
+out=$(printf '' | bash "$HOOK" 2>/dev/null); rc=$?
+report J02-empty "0:" "$rc:$out" ""
+out=$(printf '{"hook_event_name":"PreToolUse","session_id":"test-prmode-x","tool_name":"Edit","tool_input":{"file_path":"git commit"}}' | bash "$HOOK" 2>/dev/null)
+report J03-other-tool none "$(decision_of "$out")" ""
+# session_id が無くてもコマンドと cwd だけで判定する
+out=$(printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$REPO_MAIN" | bash "$HOOK" 2>/dev/null)
+report J04-no-session-protected deny "$(decision_of "$out")" "$out"
+out=$(printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$REPO_FEAT" | bash "$HOOK" 2>/dev/null)
+report J05-no-session-feat none "$(decision_of "$out")" "$out"
+out=$(printf '{"hook_event_name":"PermissionRequest","cwd":"%s","tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$REPO_FEAT" | bash "$HOOK" 2>/dev/null)
+report J06-no-session-perm-allow allow "$(decision_of "$out")" "$out"
+# /pr のフラグはもう作らない（どのイベントでも claude-pr-mode-* を残さない）
+for ev in UserPromptExpansion UserPromptSubmit PreToolUse PermissionRequest Stop; do
+  jq -cn --arg e "$ev" --arg s "$S" '{hook_event_name:$e, session_id:$s, tool_name:"Bash", command_name:"pr", prompt:"/pr", tool_input:{command:"git commit -m x"}}' \
+    | bash "$HOOK" >/dev/null 2>&1
+done
+r=absent
+[ -e "$T/claude-pr-mode-$S" ] && r=present
+report J07-no-flag absent "$r" ""
+# 異常時のログは（隔離した）$HOME/.claude/pr-mode.log に書かれる
+[ -f "$HOME/.claude/pr-mode.log" ] && r=present || r=absent
+report J08-log-in-isolated-home present "$r" "$HOME/.claude/pr-mode.log"
+grep -qF '入力 JSON を解釈できません' "$HOME/.claude/pr-mode.log" 2>/dev/null && r=ok || r="文言が一致しない"
+report J09-log-message-ok ok "$r" ""
+
+echo "# K. strip に失敗したとき（awk が無い）は生文字列で判定する（fail-open にしない）"
+LIBLESS="$T/claude-prmode-libless.$$"; mkdir -p "$LIBLESS/lib"
+cp "$HOOK" "$LIBLESS/pr-mode.sh"; cp "$HOOKS_DIR/lib/git-write.sh" "$LIBLESS/lib/"
+out=$(run_hook "$LIBLESS/pr-mode.sh" PreToolUse "$S" 'git commit -m x' "" "" "$REPO_MAIN")
+report K01-no-awk-protected deny "$(decision_of "$out")" ""
+out=$(run_hook "$LIBLESS/pr-mode.sh" PreToolUse "$S" 'git status' "" "" "$REPO_MAIN")
+report K02-no-awk-readonly none "$(decision_of "$out")" ""
+out=$(run_hook "$LIBLESS/pr-mode.sh" PermissionRequest "$S" 'git commit -m x' "" "" "$REPO_FEAT")
+report K03-no-awk-no-auto-allow none "$(decision_of "$out")" ""
+out=$(run_hook "$LIBLESS/pr-mode.sh" PreToolUse "$S" 'git push origin "main"' "" "" "$REPO_MAIN")
+report K04-no-awk-quoted-protected deny "$(decision_of "$out")" ""
+rm -rf "$LIBLESS"
+
 summary "pr-mode.sh"

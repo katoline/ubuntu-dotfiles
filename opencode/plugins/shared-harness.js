@@ -1,15 +1,18 @@
 // OpenCode V2 と共通ハーネス（Claude Code / Codex / Grok と同じ guard / pr-mode / verify-gate）の接続。
 //
 // このファイルは OpenCode の plugin として読み込まれ、判定は opencode/hooks/harness.sh に委譲する。
-// 状態は session ごとに「世代 (generation)」と「最新の実配送 user」だけを持つ:
-// - PR 権限は syncPr() の1関数だけが決める。permission 評価の直前に必ず最新の実配送 user を
-//   照合し直し、session.get / session.context / pr-mode adapter のどれかが失敗したら deny に倒す。
-// - execution.started / failed / interrupted と実 user の変更は generation を進め、
-//   進行中の検証ジョブ（synthetic 再開）を無効化する。終了判定は session ごとの job で行い、
-//   event stream を止めない。
+// Git の許可判定は /pr の起動状態に依存しない:
+// - permission 評価では共通 guard と pr-mode の PreToolUse（pr-pre）を呼び、deny / ask をそのまま反映する。
+//   guard も pr-pre も決定を返さず、フル入力の単一コマンド・メインセッション・設定が ask のときだけ
+//   pr-mode の PermissionRequest（pr-request）を呼び、allow が返ればそれを反映する
+//   （既定ブランチ以外の commit / push / PR 作成・更新が確認なしで通る）。
+// - サブエージェントと delegated-worker は agent_id 付きで渡し、pr-pre に git 書き込みを拒否させる。
+// - session ごとの「世代 (generation)」と「最新の実配送 user」は検証ゲートの再開制御だけに使う。
+//   execution.started / failed / interrupted と実 user の変更は generation を進め、進行中の検証ジョブ
+//   （synthetic 再開）を無効化する。終了判定は session ごとの job で行い、event stream を止めない。
 // - synthetic / compact で元の実 user が見えなくなっただけでは新しい turn にしない。
 // 実装しないこと:
-// - commit / push / PR の実行（/pr の権限判定だけを行う）
+// - commit / push / PR の実行（許可判定だけを行う）
 // - 独自の削除・Git 判定・検証分類（共通スクリプトの結果をそのまま使う）
 import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -42,22 +45,6 @@ function locationMatches(ctx, info) {
     }
   }
   return norm(want) === norm(got)
-}
-
-function userText(message) {
-  if (!message) return ""
-  if (typeof message.text === "string") return message.text
-  if (typeof message.content === "string") return message.content
-  return ""
-}
-
-// 明示起動だけを PR モードの開始として扱う。本文中の言及は開始しない。
-// /pr Command の展開本文は先頭の marker で判定し、通常文に引用された marker/H1 では開始しない。
-function isExplicitPr(text) {
-  if (!text) return false
-  if (/^\s*<!--\s*pr-mode-enable\s*-->/i.test(text)) return true
-  // 先頭トークンが /pr または @pr（Markdown のコード表記・引用符に囲まれていても同じ）
-  return /^\s*(?:[`"'（(]\s*)?[@/]pr(?=$|[\s`"'）)、。,.;:!?]|[`"'）)])/.test(text)
 }
 
 // config に残した安全網の ask を、共通 guard が正常終了 no-decision を返したときだけ下げる family。
@@ -215,25 +202,22 @@ export default {
           // この session で実配送を確認した user.id（compact で順序が変わっても再開始しない）
           seenUsers: new Set(),
           userID: "",
-          prActive: false,
-          // PR 状態の adapter 呼び出しだけを session 内で直列化する
-          prQueue: Promise.resolve(),
+          // 実配送 user の照合だけを session 内で直列化する
+          turnQueue: Promise.resolve(),
           nudged: false,
           // 同一 turn で警告 synthetic を繰り返さない（delivery:steer が再開する環境でもループしない）
           warned: false,
           nudgeFailed: false,
           verifyBroken: false,
-          // 中断・失敗時の canonical clear（pr-stop）に失敗したら、次の評価で再試行するまで残す
-          prClearPending: false,
         }
         sessions.set(id, state)
       }
       return state
     }
 
-    const prQueue = (state, fn) => {
-      const result = state.prQueue.then(fn, fn)
-      state.prQueue = result.then(
+    const turnQueue = (state, fn) => {
+      const result = state.turnQueue.then(fn, fn)
+      state.turnQueue = result.then(
         () => undefined,
         () => undefined,
       )
@@ -270,15 +254,15 @@ export default {
       if (state.seenUsers.size > 200) state.seenUsers.delete(state.seenUsers.values().next().value)
     }
 
-    // PR 権限を決める唯一の関数。context hook も permission 評価もこれを呼ぶ。
-    // 実配送された最新 user が変わったときだけ pr-start / pr-stop を実行し、
-    // session.get / session.context / adapter の失敗は ok:false（呼び出し側は deny）にする。
-    const syncPr = (sessionID, info) => {
+    // 検証ゲートの turn 管理。実配送された最新 user が変わったときだけ generation を進め、
+    // 進行中の検証ジョブ（synthetic 再開）を無効化する。Git の許可判定には使わない。
+    // session.get / session.context の失敗は ok:false（呼び出し側は再開しない）。
+    const syncTurn = (sessionID, info) => {
       const state = sessionState(sessionID)
-      return prQueue(state, async () => {
+      return turnQueue(state, async () => {
         if (disposed) return { ok: false, message: "plugin の終了処理中です" }
         if (!info) {
-          return { ok: false, message: "セッション情報を取得できないため、PR 権限を確認できません" }
+          return { ok: false, message: "セッション情報を取得できないため、状態を確認できません" }
         }
         if (isChild(info) || isWorker(info) || !locationMatches(ctx, info)) {
           return { ok: true, managed: false }
@@ -287,46 +271,16 @@ export default {
         try {
           messages = await ctx.session.context({ sessionID })
         } catch {
-          return { ok: false, message: "セッションの会話を取得できないため、PR 権限を確認できません" }
+          return { ok: false, message: "セッションの会話を取得できないため、状態を確認できません" }
         }
         if (disposed) return { ok: false, message: "plugin の終了処理中です" }
         const user = latestRealUser(messages)
-        // 解除に失敗した flag が残っている間は、同じ user（または user が見えないだけ）なら
-        // canonical clear を再試行する。失敗したまま古い /pr 権限を使わない。
-        if (state.prClearPending && (!user || state.seenUsers.has(user.id))) {
-          const clear = await runAdapter("pr-stop", { session_id: namespace(sessionID) })
-          if (disposed) return { ok: false, message: "plugin の終了処理中です" }
-          if (!clear.ok) {
-            return {
-              ok: false,
-              message: `PR 権限の解除に失敗したため、操作を拒否しました: ${clear.stderr || clear.error || ""}`.trim(),
-            }
-          }
-          state.prClearPending = false
-          state.prActive = false
-          return { ok: true, managed: true }
-        }
-        // synthetic だけ / compact で元の実 user が見えないだけなら、既知の権限を変えない
+        // synthetic だけ / compact で元の実 user が見えないだけなら、既知の turn を変えない
         if (!user) return { ok: true, managed: true }
         if (state.seenUsers.has(user.id)) return { ok: true, managed: true }
-        const explicit = isExplicitPr(userText(user))
-        // 非明示の本文は共通 trigger 判定へ渡さない（本文中の marker/H1 で開始しない）。
-        // 解除はどのみち同じ pr-stop（Stop 相当）だけを使う。
-        const run = await runAdapter(explicit ? "pr-start" : "pr-stop", {
-          session_id: namespace(sessionID),
-        })
-        if (disposed) return { ok: false, message: "plugin の終了処理中です" }
-        if (!run.ok) {
-          return {
-            ok: false,
-            message: `PR 状態の同期に失敗したため、操作を拒否しました: ${run.stderr || run.error || ""}`.trim(),
-          }
-        }
         const newTurn = state.userID !== ""
         rememberUser(state, user.id)
         state.userID = user.id
-        state.prActive = explicit
-        state.prClearPending = false
         state.nudged = false
         state.warned = false
         state.nudgeFailed = false
@@ -362,16 +316,8 @@ export default {
         return
       }
       if (!locationMatches(ctx, info)) return
-      // 判定の直前に最新の実配送 user と PR 権限を必ず照合する。失敗時は古い権限を使わず deny。
-      const sync = await syncPr(event.sessionID, info)
-      if (!sync.ok) {
-        event.effect = "deny"
-        event.message = sync.message || "PR 状態を確認できないため、操作を拒否しました"
-        return
-      }
       const child = isChild(info) || isWorker(info)
       const agentId = child ? "opencode-subagent" : ""
-      const state = sessionState(event.sessionID)
       const { full, commands } = commandList(event)
       if (commands.length === 0) return
 
@@ -432,10 +378,11 @@ export default {
         return
       }
 
-      // /pr 中だけ、共通 pr-mode の PermissionRequest が返す allow を設定の ask に反映する。
-      // フル入力を特定できた単一コマンドだけを対象にする（resources の断片評価で、無関係な
-      // static ask まで allow に上げない）。設定の allow はそのまま、deny はここへ来ない。
-      if (full && commands.length === 1 && state.prActive && !child && event.effect === "ask" && !anyAsk) {
+      // 共通 pr-mode の PermissionRequest が返す allow を設定の ask に反映する。
+      // /pr の起動状態は問わない。フル入力を特定できたメインセッションの単一コマンドだけを
+      // 対象にする（resources の断片評価で、無関係な static ask まで allow に上げない）。
+      // 設定の allow はそのまま、deny / ask はここへ来ない。
+      if (full && commands.length === 1 && !child && event.effect === "ask" && !anyAsk) {
         const result = parseRequestAllow(
           await runAdapter("pr-request", {
             session_id: namespace(event.sessionID),
@@ -529,21 +476,6 @@ export default {
       // 記録に失敗した turn だけ警告する。成功した記録で回復させる（失敗を残し続けない）。
       const state = sessions.get(root.rootID)
       if (state) state.verifyBroken = !run.ok
-    }
-
-    // 中断・失敗した turn の PR 権限を落とす。実 user が変わっていたら触らない。
-    // adapter が失敗しても JS 側の権限は落とし、次の permission 評価で権限を引き直す。
-    const clearPr = (sessionID, userID) => {
-      const state = sessions.get(sessionID)
-      if (!state || disposed) return Promise.resolve()
-      return prQueue(state, async () => {
-        if (disposed || state.userID !== userID) return
-        state.prActive = false
-        const run = await runAdapter("pr-stop", { session_id: namespace(sessionID) })
-        if (disposed || state.userID !== userID) return
-        // 失敗したまま古い flag を使わない。次に permission を評価する時に再試行する。
-        state.prClearPending = !run.ok
-      })
     }
 
     // どれか必須フックの登録に失敗したら plugin のセットアップを失敗させる。
@@ -662,8 +594,8 @@ export default {
         if (!sessionID) return
         const info = await getInfo(sessionID)
         if (!info) return
-        // 切り替え判断は syncPr に一本化する。ここでの失敗は permission 評価時に再試行される。
-        await syncPr(sessionID, info)
+        // turn の切り替え判断は syncTurn に一本化する。ここでの失敗は終了判定で再試行される。
+        await syncTurn(sessionID, info)
       }),
       "session.context",
     )
@@ -716,8 +648,8 @@ export default {
         if (!locationMatches(ctx, info)) return
         // 実 active の outcome は null。完了は succeeded のときだけ扱う（null は通さない）
         if (info.outcome !== "succeeded") return
-        // 最新の実配送 user と PR 権限をこの job でも引き直す
-        const sync = await syncPr(sessionID, info)
+        // 最新の実配送 user をこの job でも引き直す
+        const sync = await syncTurn(sessionID, info)
         if (!current()) return
         if (!sync.ok) {
           await notifyVerifyFailure(
@@ -847,11 +779,7 @@ export default {
           }
           if (event?.type === "session.execution.failed" || event?.type === "session.execution.interrupted") {
             const sid = eventSessionID(event)
-            if (sid) {
-              const state = sessionState(sid)
-              state.generation++
-              void clearPr(sid, state.userID)
-            }
+            if (sid) sessionState(sid).generation++
             continue
           }
           if (event?.type === "session.execution.succeeded") {

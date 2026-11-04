@@ -107,6 +107,528 @@ is_git_write() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# 保護ブランチ（既定ブランチ）判定。Claude Code / Grok / OpenCode / Codex で共有する。
+# 既定ブランチ（main / master / origin/HEAD の指すブランチ）への commit・push は
+# 常に deny し、それ以外への git 書き込みを自動承認の対象にする。
+# ---------------------------------------------------------------------------
+
+# パスをフック入力の cwd 基準の絶対パスにする。変数・コマンド置換を含む場合は cwd を返す
+# （呼び出し側は「解決できない -> cwd」として扱う）。
+_resolve_dir_arg() {
+  local dir="$1" cwd="$2"
+  case "$dir" in
+    *'$'* | *'`'*) printf '%s' "$cwd" ;;
+    /*) printf '%s' "$dir" ;;
+    *) if [ "$cwd" = / ]; then printf '/%s' "$dir"; else printf '%s/%s' "${cwd%/}" "$dir"; fi ;;
+  esac
+}
+
+# git ... -C <dir> の dir（commit / push より前の -C だけ）。引用符付きのパスも扱う。
+# 見つからなければ空を返す。
+_git_c_dir() {
+  local raw="$1" q tok base ingit=0 skip=0 want=0 candidate=""
+  [ -f "$STRIP_AWK" ] || return 0
+  raw=${raw//\\$'\n'/ }
+  q=$(printf '%s\n' "$raw" | awk -v keepq=1 -f "$STRIP_AWK" 2>/dev/null) || return 0
+  q=${q//$'\n'/;}
+  q=$(printf '%s' "$q" | tr ';&|()' ' ')
+  set -f
+  local -a toks
+  read -r -a toks <<<"$q"
+  for tok in "${toks[@]}"; do
+    tok=${tok//\"/}
+    tok=${tok//\'/}
+    tok=${tok//$'\001'/ }
+    [ -n "$tok" ] || continue
+    if [ "$want" -eq 1 ]; then candidate=$tok; want=0; continue; fi
+    if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+    if [ "$ingit" -eq 0 ]; then
+      base=${tok##*/}
+      base=${base#\\}
+      [ "$base" = git ] && ingit=1
+      continue
+    fi
+    case "$tok" in
+      -C) want=1 ;;
+      -c | --git-dir | --work-tree | --namespace | --config-env | --exec-path) skip=1 ;;
+      commit | push) set +f; printf '%s' "$candidate"; return 0 ;;
+      -*) ;;
+      *) ingit=0; candidate="" ;;
+    esac
+  done
+  set +f
+  return 0
+}
+
+# コマンド先頭の cd <dir> && / cd <dir> ; の dir。単独の cd や他形は返さない。
+# 先頭の ( は読み飛ばす（(cd <dir> && git commit ...) の形）。
+_cd_dir() {
+  local raw="$1" rest dir after q
+  raw=${raw#"${raw%%[![:space:]]*}"}
+  while [ "${raw#(}" != "$raw" ]; do
+    raw=${raw#(}
+    raw=${raw#"${raw%%[![:space:]]*}"}
+  done
+  case "$raw" in
+    cd[[:space:]]*) rest=${raw#cd} ;;
+    *) return 0 ;;
+  esac
+  rest=${rest#"${rest%%[![:space:]]*}"}
+  case "$rest" in
+    \"*)
+      q=${rest#\"}
+      dir=${q%%\"*}
+      after=${q#*\"}
+      ;;
+    \'*)
+      q=${rest#\'}
+      dir=${q%%\'*}
+      after=${q#*\'}
+      ;;
+    *)
+      dir=${rest%%[[:space:]\;\&\|]*}
+      after=${rest#"$dir"}
+      ;;
+  esac
+  [ -n "$dir" ] || return 0
+  after=${after#"${after%%[![:space:]]*}"}
+  case "$after" in
+    '&&'* | ';'*) printf '%s' "$dir" ;;
+  esac
+}
+
+# 対象リポジトリのディレクトリを解決する（引数: 生コマンド, フック入力の cwd）。
+# git -C <dir> -> 先頭の cd <dir> && / ; -> cwd の順。
+resolve_repo_dir() {
+  local raw="$1" cwd="${2:-$PWD}" dir
+  dir=$(_git_c_dir "$raw")
+  if [ -n "$dir" ]; then
+    _resolve_dir_arg "$dir" "$cwd"
+    return
+  fi
+  dir=$(_cd_dir "$raw")
+  if [ -n "$dir" ]; then
+    _resolve_dir_arg "$dir" "$cwd"
+    return
+  fi
+  printf '%s' "$cwd"
+}
+
+current_branch() { git -C "$1" branch --show-current 2>/dev/null; }
+
+# main・master・origin/HEAD の指すブランチ（origin/ を除いた名前）を出力する。
+protected_branch_names() {
+  local dir="$1" head
+  printf '%s\n' main master
+  head=$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || head=""
+  case "$head" in
+    origin/*) printf '%s\n' "${head#origin/}" ;;
+  esac
+}
+
+is_protected_branch_name() {
+  local dir="$1" name="$2"
+  [ -n "$name" ] || return 1
+  protected_branch_names "$dir" | grep -qxF -- "$name"
+}
+
+# 除去後の文字列に git <sub> が含まれるか（sub = commit / push）。
+_has_git_subcommand() {
+  local sub="$1" s="$2"
+  s=${s//\\$'\n'/ }
+  s=${s//$'\n'/;}
+  local wrap='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|command|env|exec|nohup|time|builtin)[[:space:]]+)*'
+  local gitopt='((-[cC]|--git-dir|--work-tree|--namespace)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[A-Za-z][^[:space:]]*[[:space:]]+)*'
+  local re="(^|[[:space:];&|(\`])${wrap}([^[:space:]]*/)?\\\\?git[[:space:]]+${gitopt}${sub}([[:space:];&|)<>]|\$)"
+  printf '%s\n' "$s" | grep -Eq -- "$re"
+}
+
+# 除去後のコマンド文字列から、git commit の引数トークンを 1 行ずつ出力する。
+# 引用符の中身を残した文字列（keepq 版）を渡す。区間（; & | 改行）をまたがない。
+_commit_arg_tokens() {
+  local s="$1" tok base ingit=0 seen=0 skip=0
+  local -a toks
+  s=${s//\\$'\n'/ }
+  s=${s//$'\n'/;}
+  s=$(printf '%s' "$s" | sed -E 's/[;&|]/ ; /g')
+  set -f
+  read -r -a toks <<<"$s"
+  for tok in "${toks[@]}"; do
+    [ -n "$tok" ] || continue
+    if [ "$tok" = ';' ]; then
+      ingit=0
+      seen=0
+      skip=0
+      continue
+    fi
+    if [ "$seen" -eq 1 ]; then
+      printf '%s\n' "$tok"
+      continue
+    fi
+    if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+    base=${tok##*/}
+    base=${base#\\}
+    case "$tok" in
+      *\"* | *\'*) ;;
+      *) base=${base#(}; base=${base%\)} ;;
+    esac
+    if [ "$ingit" -eq 0 ]; then
+      [ "$base" = git ] && ingit=1
+      continue
+    fi
+    case "$tok" in
+      commit) seen=1 ;;
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env) skip=1 ;;
+      -*) ;;
+      *) ingit=0 ;;
+    esac
+  done
+  set +f
+}
+
+# git commit の引数に --amend / --no-verify / -n（引用符で割ったものを含む）があるか。
+# -m / -F / --message / --file / -C / -c 等の値はオプションとして見ない。
+_commit_unsafe_option() {
+  local raw="$1" kq tok nq quoted optval=0 rest i ch len
+  [ -f "$STRIP_AWK" ] || return 1
+  kq=$(printf '%s\n' "$raw" | awk -v keepq=1 -f "$STRIP_AWK" 2>/dev/null | tr '\n' ' ') || return 1
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    if [ "$optval" -eq 1 ]; then optval=0; continue; fi
+    nq=${tok//[\"\']/}
+    quoted=0
+    [ "$tok" != "$nq" ] && quoted=1
+    nq=${nq//$'\001'/ }
+    if [ "$quoted" -eq 0 ]; then
+      case "$nq" in '('*) nq=${nq#(} ;; esac
+      case "$nq" in *')') nq=${nq%\)} ;; esac
+    fi
+    case "$nq" in
+      --amend | --no-verify) return 0 ;;
+      --message | --file | --author | --date | --template | --fixup | --squash | --trailer | --cleanup | --reuse-message | --reedit-message) optval=1 ;;
+      --*=*) ;;
+      --*) ;;
+      -m | -F | -C | -c | -t) optval=1 ;;
+      -[!-]*)
+        rest=${nq#-}
+        len=${#rest}
+        i=0
+        while [ "$i" -lt "$len" ]; do
+          ch=${rest:i:1}
+          case "$ch" in
+            n) return 0 ;;
+            m | F | C | c | t)
+              if [ $((i + 1)) -lt "$len" ]; then break; fi
+              optval=1
+              break
+              ;;
+          esac
+          i=$((i + 1))
+        done
+        ;;
+    esac
+  done < <(_commit_arg_tokens "$kq")
+  return 1
+}
+
+# git commit の可否: none（対象外）/ protected / ask / ok
+commit_verdict() {
+  local raw="$1" cwd="${2:-$PWD}" s dir branch
+  s=$(stripped_or_raw "$raw")
+  _has_git_subcommand commit "$s" || { printf none; return; }
+  dir=$(resolve_repo_dir "$raw" "$cwd")
+  branch=$(current_branch "$dir")
+  if is_protected_branch_name "$dir" "$branch"; then printf protected; return; fi
+  if _commit_unsafe_option "$raw"; then printf ask; return; fi
+  printf ok
+}
+
+# push の解析状態（1 コマンド内の複数 push は優先度の高い結果を残す）
+_push_refspecs=()
+_push_vars=0
+_push_all=0
+_push_delete=0
+_push_force=0
+_push_noverify=0
+_push_quoted_opt=0
+_push_protected=0
+
+_push_reset() {
+  _push_refspecs=()
+  _push_vars=0
+  _push_all=0
+  _push_delete=0
+  _push_force=0
+  _push_noverify=0
+  _push_quoted_opt=0
+  _push_protected=0
+}
+
+# git push より後ろのトークンを解析する（引用符は除去済み）。
+_push_analyze_args() {
+  local tok skip=0 options=1 positional=0
+  for tok in "$@"; do
+    if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+    if [ "$options" -eq 1 ]; then
+      case "$tok" in
+        --) options=0; continue ;;
+        --all | --mirror) _push_all=1; continue ;;
+        --delete | --prune) _push_delete=1; continue ;;
+        --no-verify) _push_noverify=1; continue ;;
+        --force | --force=* | --force-with-lease | --force-with-lease=* | --force-if-includes) _push_force=1; continue ;;
+        --push-option | --receive-pack | --exec | --repo | -o) skip=1; continue ;;
+        --push-option=* | --receive-pack=* | --exec=* | --repo=*) continue ;;
+        # 未知の長いオプション（--follow-tags / --signed / --dry-run 等）は無視する
+        --*) continue ;;
+        # 短いフラグ群だけを文字で判定する（-f / -d / -fu 等）
+        -[!-]*)
+          case "$tok" in *f*) _push_force=1 ;; esac
+          case "$tok" in *d*) _push_delete=1 ;; esac
+          continue
+          ;;
+      esac
+    fi
+    case "$tok" in
+      *'$'* | *'`'*) _push_vars=1 ;;
+    esac
+    case "$tok" in
+      :*) _push_delete=1; continue ;;
+      +*) tok=${tok#+} ;;
+    esac
+    if [ "$positional" -eq 0 ]; then
+      positional=1 # 最初の位置引数はリモート名
+    else
+      _push_refspecs+=("$tok")
+    fi
+  done
+}
+
+# refspec の宛先が保護ブランチなら 0。判定できない形（変数・ワイルドカード）は
+# _push_vars を立てて 1 を返す。
+_push_ref_is_protected() {
+  local dir="$1" ref="$2" dest
+  ref=${ref#+}
+  case "$ref" in *'*'* | *'$'* | *'`'*) _push_vars=1; return 1 ;; esac
+  case "$ref" in
+    *:*) dest=${ref#*:} ;;
+    *) dest=$ref ;;
+  esac
+  dest=${dest#+}
+  if [ -z "$dest" ]; then _push_delete=1; return 1; fi
+  [ "$dest" = HEAD ] && dest=$(current_branch "$dir")
+  case "$dest" in
+    refs/heads/*) dest=${dest#refs/heads/} ;;
+    refs/*) return 1 ;;
+  esac
+  is_protected_branch_name "$dir" "$dest"
+}
+
+# 1 つの push 区間の宛先を判定する。
+_push_finalize() {
+  local dir="$1" branch r
+  branch=$(current_branch "$dir")
+  if [ "${#_push_refspecs[@]}" -eq 0 ]; then
+    is_protected_branch_name "$dir" "$branch" && _push_protected=1
+    return
+  fi
+  for r in "${_push_refspecs[@]}"; do
+    _push_ref_is_protected "$dir" "$r" && _push_protected=1
+  done
+}
+
+# 引用符の中身を残した文字列から、git push の引数トークンを 1 行ずつ出力する。
+# 区間（; & | 改行）をまたがない。引用符の中の区切りは \001 になっている前提。
+_push_arg_tokens() {
+  local q="$1" tok nq base ingit=0 seen=0 skip=0 pvalskip=0
+  local -a toks
+  q=${q//\\$'\n'/ }
+  q=${q//$'\n'/;}
+  q=$(printf '%s' "$q" | sed -E 's/[;&|]/ ; /g')
+  set -f
+  read -r -a toks <<<"$q"
+  for tok in "${toks[@]}"; do
+    [ -n "$tok" ] || continue
+    if [ "$tok" = ';' ]; then
+      ingit=0
+      seen=0
+      skip=0
+      pvalskip=0
+      continue
+    fi
+    nq=${tok//[\"\']/}
+    nq=${nq//$'\001'/ }
+    if [ "$seen" -eq 1 ]; then
+      if [ "$pvalskip" -eq 1 ]; then pvalskip=0; continue; fi
+      printf '%s\n' "$tok"
+      case "$nq" in
+        --push-option | --receive-pack | --exec | --repo | -o) pvalskip=1 ;;
+      esac
+      continue
+    fi
+    if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+    base=${nq##*/}
+    base=${base#\\}
+    case "$tok" in
+      *\"* | *\'*) ;;
+      *) base=${base#(}; base=${base%\)} ;;
+    esac
+    if [ "$ingit" -eq 0 ]; then
+      [ "$base" = git ] && ingit=1
+      continue
+    fi
+    case "$nq" in
+      push) seen=1 ;;
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env) skip=1 ;;
+      commit) ingit=0 ;;
+      -*) ;;
+      *) ingit=0 ;;
+    esac
+  done
+  set +f
+}
+
+# git push 区間の引用符で割ったトークン（"--force" / -"f" / "main" / "$BRANCH" 等）を検出する。
+_push_quoted_flags() {
+  local raw="$1" dir="$2" kq tok nq
+  [ -f "$STRIP_AWK" ] || return 0
+  kq=$(printf '%s\n' "$raw" | awk -v keepq=1 -f "$STRIP_AWK" 2>/dev/null | tr '\n' ' ') || return 0
+  set -f
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    nq=${tok//[\"\']/}
+    [ "$tok" = "$nq" ] && continue
+    nq=${nq//$'\001'/ }
+    case "$nq" in
+      --force | --force=* | --force-with-lease | --force-with-lease=* | --force-if-includes) _push_force=1 ;;
+      --delete | --prune) _push_delete=1 ;;
+      --all | --mirror) _push_all=1 ;;
+      --no-verify) _push_noverify=1 ;;
+      -*) _push_quoted_opt=1 ;;
+      *)
+        case "$nq" in *'$'* | *'`'*) _push_vars=1 ;; esac
+        _push_ref_is_protected "$dir" "$nq" && _push_protected=1
+        ;;
+    esac
+  done < <(_push_arg_tokens "$kq")
+  set +f
+}
+
+# git push の可否: none / all / delete / force / no-verify / protected / indeterminate / ok
+# indeterminate は宛先を判定できない（変数・ワイルドカード・引用符で割った未知のオプション）。
+push_destination_verdict() {
+  local raw="$1" cwd="${2:-$PWD}" s dir tok base ingit=0 seen=0 skip=0
+  s=$(stripped_or_raw "$raw")
+  _has_git_subcommand push "$s" || { printf none; return; }
+  _push_reset
+  dir=$(resolve_repo_dir "$raw" "$cwd")
+
+  s=${s//\\$'\n'/ }
+  s=${s//$'\n'/;}
+  s=$(printf '%s' "$s" | sed -E 's/[;&|()]/ ; /g')
+  set -f
+  local -a toks args
+  read -r -a toks <<<"$s"
+  args=()
+  for tok in "${toks[@]}"; do
+    tok=${tok//\"/}
+    tok=${tok//\'/}
+    if [ "$tok" = ';' ]; then
+      if [ "$seen" -eq 1 ]; then
+        _push_analyze_args "${args[@]}"
+        _push_finalize "$dir"
+        args=()
+        _push_refspecs=()
+      fi
+      ingit=0
+      seen=0
+      skip=0
+      continue
+    fi
+    if [ "$seen" -eq 1 ]; then
+      args+=("$tok")
+      continue
+    fi
+    if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+    base=${tok##*/}
+    base=${base#\\}
+    if [ "$ingit" -eq 0 ]; then
+      [ "$base" = git ] && ingit=1
+      continue
+    fi
+    case "$tok" in
+      push) seen=1 ;;
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env) skip=1 ;;
+      commit) ingit=0 ;;
+      -*) ;;
+      *) ingit=0 ;;
+    esac
+  done
+  if [ "$seen" -eq 1 ]; then
+    _push_analyze_args "${args[@]}"
+    _push_finalize "$dir"
+  fi
+  set +f
+
+  _push_quoted_flags "$raw" "$dir"
+
+  if [ "$_push_all" -eq 1 ]; then printf all
+  elif [ "$_push_delete" -eq 1 ]; then printf delete
+  elif [ "$_push_force" -eq 1 ]; then printf force
+  elif [ "$_push_noverify" -eq 1 ]; then printf no-verify
+  elif [ "$_push_protected" -eq 1 ]; then printf protected
+  elif [ "$_push_vars" -eq 1 ] || [ "$_push_quoted_opt" -eq 1 ]; then printf indeterminate
+  else printf ok
+  fi
+}
+
+# PR のマージ（gh pr merge / gh api の /pulls/N/merge への PUT / GraphQL の
+# mergePullRequest）か。マージは常に確認ダイアログにする（Codex は deny）。
+is_pr_merge() {
+  local raw="$1" s q token gh=0 api=0 endpoint=0 method="" field=0 next_method=0
+  local -a tokens
+  s=$(stripped_or_raw "$raw")
+  s=${s//\\$'\n'/ }
+  s=${s//$'\n'/;}
+  printf '%s\n' "$s" | grep -Eq -- '(^|[[:space:];&|(`])([^[:space:]]*/)?\\?gh[[:space:]]+pr[[:space:]]+merge([[:space:];&|)<>]|$)' && return 0
+  case "$s" in *gh*api* | *graphql*) case "$raw" in *mergePullRequest*) return 0 ;; esac ;; esac
+  [ -f "$STRIP_AWK" ] || return 1
+  raw=${raw//\\$'\n'/ }
+  q=$(printf '%s\n' "$raw" | awk -v keepq=1 -v join_quoted_lines=1 -f "$STRIP_AWK" 2>/dev/null) || q="$raw"
+  q=${q//$'\n'/;}
+  q=$(printf '%s\n' "$q" | sed -E 's/[;&|]/ ; /g; s/[()`]/ /g')
+  read -r -a tokens <<<"$q ;"
+  for token in "${tokens[@]}"; do
+    if [ "$token" = ';' ]; then
+      if [ "$endpoint" -eq 1 ]; then
+        case "$method" in PUT) return 0 ;; '') [ "$field" -eq 1 ] && return 0 ;; esac
+      fi
+      gh=0
+      api=0
+      endpoint=0
+      method=""
+      field=0
+      next_method=0
+      continue
+    fi
+    token=${token//\"/}
+    token=${token//\'/}
+    token=${token//$'\001'/ }
+    if [ "$api" -eq 0 ]; then
+      case "$token" in gh | */gh | '\gh') gh=1 ;; api) api=$gh ;; esac
+      continue
+    fi
+    if [ "$next_method" -eq 1 ]; then method="$token"; next_method=0; continue; fi
+    case "$token" in
+      -X | --method) next_method=1 ;;
+      --method=*) method="${token#--method=}" ;;
+      -f | -F | --field | --raw-field | --input | --field=* | --raw-field=* | --input=*) field=1 ;;
+      *) [[ "$token" =~ ^[^[:space:]]*/pulls/[0-9]+/merge$ ]] && endpoint=1 ;;
+    esac
+  done
+  return 1
+}
+
 # force push は /pr 中でも deny（Claude の ask も Grok の always-approve も通さない）
 is_force_push() {
   local raw="$1" s
