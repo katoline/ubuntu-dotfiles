@@ -57,12 +57,29 @@
             };
           });
       # Nodeだけの依存を差し替える。PythonやPlaywright等の固定は変えない。
-      secureSlim = nodejsPkgs.nodejs-slim_26.override {
+      # 依存を差し替えると公式キャッシュに無くなり、手元で V8 ごとソースビルドになる。
+      # 全コア並列（cores = 0）だと 12GB 級のマシンでメモリを使い切って固まるので、
+      # ビルド開始時の空きメモリ 2.5GB につき 1 並列に抑える（最低 1、上限は元の値）。
+      # 差し替えが不要になったら公式ビルド（キャッシュあり）と同一になるよう、制限もかけない。
+      slimWithSecureDeps = nodejsPkgs.nodejs-slim_26.override {
         callPackage = path: args: nodejsPkgs.callPackage path (args // {
           c-ares = secureCares;
           sqlite = secureSqlite;
         });
       };
+      secureSlim =
+        if secureCares == nodejsPkgs.c-ares && secureSqlite == nodejsPkgs.sqlite then
+          slimWithSecureDeps
+        else
+          slimWithSecureDeps.overrideAttrs (old: {
+            preConfigure = (old.preConfigure or "") + ''
+              memJobs=$(awk '/^MemAvailable:/ { j = int($2 / 2621440); print (j < 1 ? 1 : j) }' /proc/meminfo)
+              if [ -n "$memJobs" ] && [ "$memJobs" -lt "''${NIX_BUILD_CORES:-1}" ]; then
+                echo "メモリに合わせてビルド並列数を $NIX_BUILD_CORES から $memJobs に下げます"
+                export NIX_BUILD_CORES=$memJobs
+              fi
+            '';
+          });
       secureNode =
         assert nodejsPkgs.lib.versionAtLeast secureSlim.version "26.12.1";
         nodejsPkgs.nodejs_26.override { nodejs-slim = secureSlim; };
