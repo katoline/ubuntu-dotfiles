@@ -81,7 +81,7 @@ Codex の sandbox・承認・フックは OpenCode 内のツールに引き継�
 
 スキルは `$名前` で明示起動できる。PRは、作業が完了して検証が通ったときのほか、文中の `$pr`（Codex と同じく直前の文字は問わず、直後が英数字・`_` `:` `-` 以外のとき。`$prでPRを作って` も起動し、`$prune` は対象外）、または前後の空白を除いた依頼文の先頭語が `/pr`・旧 `/prompts:pr` の場合に起動する。説明文中の `/pr` だけでは起動しない。自然言語の「PRを出して」でも、検証が済んだ作業なら完了時と同じ手順を実行する。旧custom promptは非推奨なので、新しい入口にはスキルを使う。[公式Skills](https://learn.chatgpt.com/docs/build-skills)、[公式Custom Prompts](https://learn.chatgpt.com/docs/custom-prompts)
 
-CodexのPreToolUseは拒否専用で、Claudeのフックによる自動承認は使えない。共通の事故防止ガードが確認（ask）を求める操作は、承認情報の有無にかかわらず常に拒否する。`approvals_reviewer = "auto_review"` では承認がAIの自動レビューへ回るため、`require_escalated` の再試行でユーザー確認を代替しない。対象のコマンドと理由を示し、ユーザーに手動実行を依頼する。`clean-branches` の未マージブランチ強制削除も同様に、候補の一覧と理由、手動実行するコマンドを示す。拒否対象は停止し、別の書き方やツールで迂回しない。
+CodexのPreToolUseは拒否専用で、Claudeのフックによる自動承認は使えない。共通の事故防止ガードが deny する操作は、承認情報の有無にかかわらず常に拒否する。共通ガードが確認なしで通す操作（破壊的な git 操作など）は Codex の承認ポリシーに任せる。`approvals_reviewer = "auto_review"` では承認がAIの自動レビューへ回るため、`require_escalated` の再試行でユーザー確認を代替しない。対象のコマンドと理由を示し、ユーザーに手動実行を依頼する。`clean-branches` の未マージブランチ強制削除も同様に、候補の一覧と理由、手動実行するコマンドを示す。拒否対象は停止し、別の書き方やツールで迂回しない。
 
 Codexはフックがタイムアウト・失敗すると止めずにツールを実行する（Claudeの `onFailure: "block"` に当たる設定が無い）ため、PreToolUseの `harness.sh`・`guard.sh` のtimeoutは30秒にしている。
 

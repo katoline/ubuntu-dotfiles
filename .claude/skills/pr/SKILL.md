@@ -30,13 +30,13 @@ allowed-tools:
 
 - 作業が完了して検証が通ったとき、またはユーザーが `/pr` と打ったときに実行する。「PRを出して」だけの依頼でも、検証が済んだ作業なら同じ手順を実行してよい
 - 既定ブランチ（`main` / `master` / `origin/HEAD` の指すブランチ）への `git commit` / `git push` は、フックが常に拒否する。既定ブランチ上にいるなら先に作業ブランチを作る
-- 既定ブランチ以外での `git commit` / `git push` / `gh pr create`（別名 `gh pr new`）/ `gh pr edit` / `gh api` の `/pulls` 書き込み（マージ以外）は、単一コマンドならフックが自動承認する。`/pr` を起動したかどうかは問わない
-- **自動承認は単一コマンドに限る**。`git commit` / `git push` / `gh pr create` / `gh pr edit` は必ず **1つずつ独立した Bash 呼び出しで実行**し、`&&` `;` `|` や改行で他のコマンド（`git add` や `git checkout -b` を含む）と繋がない。複合コマンド・コマンド置換（`$( )`）・リダイレクトは自動承認されず、通常の確認ダイアログに落ちる（拒否はされない）。例外は本文を渡す `"$(cat <<'EOF' … EOF\n)"` の定型だけ。オプションの確認（`--help` を含む）なども探りの複合コマンドにせず、単独で実行する
+- 既定ブランチ以外での `git commit` / `git push` / `gh pr create`（別名 `gh pr new`）/ `gh pr edit` / `gh api` の `/pulls` 書き込み（マージ以外）は、Claude Code ではフックが確認なしで通す（Grok / OpenCode は単一コマンドだけ）。`/pr` を起動したかどうかは問わない
+- `git commit` / `git push` / `gh pr create` / `gh pr edit` は **1つずつ独立した Bash 呼び出しで実行**し、`&&` `;` `|` や改行で他のコマンド（`git add` や `git checkout -b` を含む）と繋がない。Claude Code は複合コマンドも確認なしで通るが、Grok と OpenCode は単一コマンドだけを自動承認する。例外は本文を渡す `"$(cat <<'EOF' … EOF\n)"` の定型だけ。オプションの確認（`--help` を含む）なども探りの複合コマンドにせず、単独で実行する
 - git commit / git push / gh pr create / gh pr edit は**メインセッションが直接実行**し、サブエージェントへ委譲しない（サブエージェントからの実行はフック入力の `agent_id` で見分けられ、常に拒否される）
-- `--no-verify` / `--amend` / force push / `--delete` / 既定ブランチ宛 / 別リポジトリ宛（`-R` / `--repo`）はフックが自動承認しない。force push・リモートブランチの削除・既定ブランチ宛は拒否、`--amend` / `--no-verify` / 宛先を判定できない push は確認ダイアログになる。いずれも使わない
-- コミットの直前に、フックがコミットされる差分（`-a` 付きなら `git diff HEAD`、無ければステージ済み）を既知のトークン形式（GitHub / Anthropic / OpenAI / xAI / AWS / Slack / Google / Stripe / npm のキー、秘密鍵ブロック）で検査する。一致があれば自動承認されず、理由にファイル名と形式名が出る。その場合は該当ファイルを add から外すか、ユーザーに確認する
-- PR のマージ（`gh pr merge` / `gh api` の `/pulls/N/merge` への PUT / GraphQL の `mergePullRequest`）はこのスキルの範囲外。常に確認ダイアログになり、ユーザーがその PR のマージを明示的に指示したときだけ実行する。自分から提案しない（Codex ではフックが拒否する）
-- Claude Code は `PermissionRequest` で自動承認する。Grok は `PermissionRequest` が無いため、自動承認条件を満たさない git 書き込みだけ PreToolUse が ask にする（always-approve でも確認になる）
+- force push・`--delete` / `--all` / `--mirror`・既定ブランチ宛・`--no-verify`・宛先を判定できない push はフックが拒否する。`--amend` / `-n` は確認なしで通るが、履歴を書き換えるので使わない。別リポジトリ宛（`-R` / `--repo`）も使わない
+- コミットの直前に、フックがコミットされる差分（`-a` 付きなら `git diff HEAD`、無ければステージ済み）を既知のトークン形式（GitHub / Anthropic / OpenAI / xAI / AWS / Slack / Google / Stripe / npm のキー、秘密鍵ブロック）で検査する。一致があれば拒否され、理由にファイル名と形式名が出る。その場合は該当ファイルを add から外す
+- PR のマージ（`gh pr merge` / `gh api` の `/pulls/N/merge` への PUT / GraphQL の `mergePullRequest`）はこのスキルの範囲外。ユーザーがその PR のマージを明示的に指示したときだけ実行する。確認ダイアログが出るのは既定ブランチを base にする PR のマージだけ（`gh api` のマージは常に確認）。自分から提案しない（Codex ではフックが拒否する）。複数タスクを進めているときはタスクごとにマージや確認を挟まず PR の作成で止め、全完了後に PR を一覧で報告し、指示されたら対象の `gh pr merge` を `&&` で連結した1つのコマンドにまとめて確認を1回にする
+- Claude Code は `PermissionRequest` がマージ以外を allow する。Grok は `PermissionRequest` が無いため、自動承認条件を満たさない git 書き込みだけ PreToolUse が ask にする（always-approve でも確認になる）
 
 ## 手順
 

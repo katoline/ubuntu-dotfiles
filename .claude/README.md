@@ -11,7 +11,7 @@
 | `settings.json` | Claude Code の設定（フック・言語・effortLevel・permissions など） |
 | （グローバル指示） | 実体はリポジトリの [`ai/`](../ai/README.md)。`ai/install.sh` が `~/.claude/CLAUDE.md` → `ai/core.md`（全CLI共通）、`~/.claude/rules/claude.md` → `ai/claude.md`（Claude Code 固有のモデル運用とフックの挙動）のリンクを張る。`.claude/setup.sh` の配布対象ではない |
 | `hooks/notify.sh` | Stop / Notification 時に iPhone へプッシュ通知するフック（送信本体は `claude-notify/send-push.mjs`）。Claude / Grok |
-| `hooks/pr-mode.sh` | 既定ブランチへの git commit / push を拒否し、それ以外の commit / push / PR 作成・更新を自動承認し、PR のマージを確認にするフック（Claude / Grok） |
+| `hooks/pr-mode.sh` | 既定ブランチへの git commit / push を拒否し、マージ以外のツール利用を自動承認する。確認ダイアログは既定ブランチを base にする PR のマージだけ（Claude / Grok） |
 | `hooks/guard-destructive.sh` | 回復不能な操作（ルート・ホーム直下の削除、破壊的git操作等）を機構的に止めるフック |
 | `hooks/verify-gate.sh` | dotfiles の検証対象ファイルを編集したセッションで、対応する検証コマンド（`bash .claude/tests/run.sh` / `nix eval`）が成功するまでターンを終えさせないフック |
 | `hooks/validate-claude-config.sh` | `~/.claude` 配下の設定ファイル編集直後にJSON構文・シェル構文・frontmatterを検証するフック |
@@ -59,7 +59,7 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 
 - `permissions.deny`：`~/.claude/claude-notify.json`・`~/.claude/history.jsonl` に加え、SSH秘密鍵・AWS認証情報・`gh` の hosts.yml・Docker設定・`.netrc`・GPG鍵・kubeconfig・`.npmrc`・主要な `.env` 変種（`.env.example` は除く。一覧は settings.json）などの秘密ファイルの読み取りと `sudo` の実行を禁止（詳細は settings.json）
 - `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` に加え、`apt` / `snap`・`npm install -g` 系・`pip install --user`・`pipx`・`uv tool install`・`cargo` / `gem` / `go install`・`nix profile` / `nix-env`・`home-manager` など、プロジェクト外へ恒久的な変更を及ぼすコマンドを実行前に必ず確認（詳細は settings.json）。Grok の always-approve でもシェルの ask ルールは効く
-- `hooks`：`PreToolUse`(Bash) で `hooks/pr-mode.sh` と `hooks/guard-destructive.sh`、`PermissionRequest`(Bash) で `hooks/pr-mode.sh`、`PostToolUse`(Edit|Write|NotebookEdit|write|search_replace) で `hooks/validate-claude-config.sh` と `hooks/verify-gate.sh`、`PostToolUse`(Bash) / `Stop` で `hooks/verify-gate.sh`、`Stop` / `Notification`(matcher: `permission_prompt`) で `hooks/notify.sh`。Grok の matcher `Bash` は `run_terminal_command` にも当たる
+- `hooks`：`PreToolUse`(Bash) で `hooks/pr-mode.sh` と `hooks/guard-destructive.sh`、`PermissionRequest`(*) で `hooks/pr-mode.sh`、`PostToolUse`(Edit|Write|NotebookEdit|write|search_replace) で `hooks/validate-claude-config.sh` と `hooks/verify-gate.sh`、`PostToolUse`(Bash) / `Stop` で `hooks/verify-gate.sh`、`Stop` / `Notification`(matcher: `permission_prompt`) で `hooks/notify.sh`。Grok の matcher `Bash` は `run_terminal_command` にも当たる
   - `PreToolUse` の `hooks/pr-mode.sh`・`hooks/guard-destructive.sh` は、高負荷時の打ち切りを減らすため timeout を30秒とし、`onFailure: "block"` を付けている。**外さないこと**（外すと安全装置が壊れたとき＝起動不能・タイムアウト・想定外の exit コードのときに黙って素通りになる）。代償として、フックのファイルが消える・壊れると全 Bash が止まる
   - Orca（エージェント管理アプリ）が書き込んだフックと `statusLine`（コマンドに `orca` を含むもの）は外部ツール由来なので手で編集しない。`tests/run.sh` が「登録元が `bash $HOME/.claude/hooks/<実在するスクリプト>` か許可リストの外部ツールか」を検査し、知らない登録元が増えたら落ちる
 - `env.CLAUDE_CODE_SUBAGENT_MODEL`：`opus`（サブエージェントの既定モデル。振り分けは `ai/claude.md`）
@@ -74,14 +74,14 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 
 ## Git操作の制限（既定ブランチ保護）
 
-方針は「既定ブランチ（`main` / `master` / `origin/HEAD` の指すブランチ）への commit・push は常に拒否し、それ以外の作業ブランチでの commit・push・PR の作成と更新は自動承認する。PR のマージは常に確認」。`/pr` は同じ手順を明示的に起動する入口で、許可判定は `/pr` を起動したかどうかに依存しない。判定の実体は `hooks/lib/git-write.sh` の1か所で、Claude / Grok / OpenCode の adapter / Codex が共有する。
+方針は「既定ブランチ（`main` / `master` / `origin/HEAD` の指すブランチ）への commit・push は常に拒否し、それ以外の作業ブランチでの commit・push・PR の作成と更新は自動承認する。確認ダイアログを出すのは既定ブランチを base にする PR のマージだけ」。`/pr` は同じ手順を明示的に起動する入口で、許可判定は `/pr` を起動したかどうかに依存しない。判定の実体は `hooks/lib/git-write.sh` の1か所で、Claude / Grok / OpenCode の adapter / Codex が共有する。
 
 各層の役割：
 
 - `ai/core.md`（`~/.claude/CLAUDE.md`）：検証が通ったら作業ブランチで commit・push・PR 作成まで進めること、既定ブランチへは commit・push しないこと、PR のマージはユーザーの明示的な指示があるときだけ行い自分から提案しないことを指示する（Claude が試みること自体を抑止）
 - `skills/pr/SKILL.md`：手順（検証→現状把握→ブランチ準備→コミット分割→push と PR 作成→報告）と、自動承認を受けるための単一コマンドの条件
-- `settings.json` の `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` は既定で確認ダイアログ。`hooks/pr-mode.sh` の `PermissionRequest` が自動承認条件を満たすものだけを allow に変える
-- `hooks/pr-mode.sh`：状態を持たず、コマンドと対象リポジトリの状態から毎回判定する（`PreToolUse`(Bash) の deny / ask と `PermissionRequest`(Bash) の allow）
+- `settings.json` の `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` は設定上の ask（Grok が使う）。Claude では `hooks/pr-mode.sh` の `PermissionRequest` がマージ以外を allow に変える
+- `hooks/pr-mode.sh`：状態を持たず、コマンドと対象リポジトリの状態から毎回判定する（`PreToolUse`(Bash) の deny / Grok 用 ask と、`PermissionRequest`(*) の allow）
 
 判定：
 
@@ -89,19 +89,13 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 - 対象リポジトリ：コマンドに `git -C <dir>` があればその dir、コマンド先頭が `cd <dir> &&`（または `;`。先頭の `(` は読み飛ばすので `(cd <dir> && …)` も解決する）ならその dir（フック入力の cwd からの相対も解決）、それ以外はフック入力の cwd。変数・コマンド置換で解決できないときは cwd
 - `PreToolUse`(Bash)：
   - サブエージェントからの git 書き込み、force push、`--all` / `--mirror`、リモートブランチ削除、`--no-verify` の push、保護ブランチへの commit / push を deny する。push の宛先は refspec（`main` / `HEAD:main` / `feat:main` / `refs/heads/main` / `+main` 等）と、refspec 無し・`HEAD` 単独のときの現在ブランチで判定する
-  - PR のマージ（`gh pr merge` / `gh api` の `/pulls/N/merge` への PUT / GraphQL の `mergePullRequest`）は ask
-  - `git commit --amend` / `--no-verify` / `-n` と、変数などで push 先を判定できない形は ask
+  - `--no-verify` / `-n` を含む commit、変数などで宛先を判定できない push、コミットされる差分の秘密情報（`hooks/lib/scan-secrets.sh`）も deny する。`--amend` を含む commit は何も返さない（確認なし）
+  - 確認が必要な PR のマージ（既定ブランチ宛・base 判定不能の `gh pr merge`、`gh api` のマージ）は `PreToolUse` で ask を返す。既定ブランチ以外宛の `gh pr merge` は何も返さない（`PermissionRequest` が allow する）
   - Grok は `PermissionRequest` を持たないため、自動承認条件を満たさない git 書き込みも `PreToolUse` で ask にする（always-approve でも確認になる）。stdin は snake_case / camelCase 両対応、ツール名は `Bash` と `run_terminal_command` を見る
-- `PermissionRequest`(Bash)（Claude）：`PreToolUse` が決定を返さなかった対象コマンドを、次をすべて満たすときだけ `behavior: allow` で自動承認する（`PreToolUse` の allow では `permissions.ask` を上書きできないため、ask ダイアログの代替はここで行う）
-  - `git commit` / `git push` / `gh pr create`（別名 `gh pr new`）/ `gh pr edit` / `gh api` の `/pulls` 書き込み（マージ以外）で、保護ブランチ以外かつ単一コマンド
-  - 複合コマンド・改行区切り・コマンド置換（`$( )` / `` ` ``）・リダイレクト（`2>&1` は許容）を含まない。引用符の中身と HEREDOC 本文は `hooks/lib/strip-shell.awk`（引用符の種別を追跡する状態機械）で除去してから判定するため、PR本文中の演算子リテラルなどを誤検知しない（ただし二重引用符の中のバッククォート置換と、引用符無しタグの HEREDOC 本文にある `$( )` / バッククォートは bash が実際に実行するので判定対象に残す）。`"$(cat <<'EOF' … EOF\n)"` の定型 HEREDOC 本文は許す
-  - `git push` は、宛先が保護ブランチでない・force系（`--force*` / `-f` を含む短縮オプション群 / `+refspec`）でない・削除系（`--delete` / `--prune` / `-d` / `:branch`）でない・`--mirror` / `--all` でない・`--no-verify` でない・変数などで宛先を判定できない形でない。長いオプション（`--follow-tags` / `--signed` / `--dry-run` 等）は名前で判定し、未知の `--*` は force / delete の文字判定に掛けない（文字判定は `-f` / `-d` などの短いフラグ群だけ）
-  - `git commit` は `--no-verify` / `-n` を含む短縮オプション群 / `--amend` を含まない（判定は `git commit` の引数区間だけで行い、`-m` / `--message` / `-F` / `--file` / `-C` / `-c` 等の値はオプションとして見ない）
-  - `gh pr create` / `gh pr new` / `gh pr edit` は別リポジトリ宛（`-R` / `--repo`）でない
-  - `git commit` は、コミットされる差分（`-a` 付きなら `git diff HEAD`、無ければステージ済み）に既知のトークン形式（`hooks/lib/scan-secrets.sh` が GitHub / Anthropic / OpenAI / xAI / AWS / Slack / Google / Stripe / npm のキーと秘密鍵ブロックを検査）が無い。一致があれば自動承認せず、ファイル名と形式名を理由にして ask にする
-  - 引用符を含むトークンは、`git push` と `git commit` の引数区間で判定する。引用符を取り除いた形が `-` で始まるオプション（`"--force"` / `--for"ce"` / `-"f"` / `--am"end"`）か `main` / `master` 宛（`ma"in"` / `"HEAD:main"`）なら自動承認しない。`git commit -m "- add"` のようなオプションの値や、push 区間の外の `gh pr create --base "main"` のマージ先指定は落とさない。`gh pr create` / `new` / `edit` は引用符で割った `-R` / `--repo` も自動承認しない。`git push` の引数の変数（`$BRANCH`）も同様
-  - 条件を満たさないときは何も返さず、通常の確認ダイアログに落とす（拒否はしない）。PR のマージも allow しない
-- 二重化：`PreToolUse` が無効な環境向けに、`PermissionRequest` 側でも保護ブランチ宛・force・削除系の deny を判定する
+- `PermissionRequest`(*)（Claude）：ツールの種類（Bash / Edit / Write / MCP 等）とコマンドの形（複合コマンドを含む）を問わず、次を除いて `behavior: allow` を返す（`PreToolUse` の allow では `permissions.ask` を上書きできないため、確認ダイアログの代替はここで行う）
+  - force push、保護ブランチへの commit / push、`--no-verify` / `-n`、削除系 push、宛先を判定できない push は `behavior: deny`
+  - PR のマージは何も返さない（= 確認ダイアログ）。`gh pr merge` は対象リポジトリの cwd で `gh pr view <同じ引数> --json baseRefName -q .baseRefName` を実行し、base が `main` / `master` / `origin/HEAD` の指すブランチなら確認、それ以外のブランチ宛なら allow する。base を取得できない・判定できない場合も確認（安全側）。`gh api` の `/pulls/N/merge` への PUT / GraphQL の `mergePullRequest` は常に確認
+- 二重化：`PreToolUse` が無効な環境向けに、`PermissionRequest` 側でも保護ブランチ宛・force・削除系・`--no-verify`・宛先不明 push の deny を判定する
 
 Git 書き込みの検出は `git commit` / `git push` / `gh pr create`（`/usr/bin/git` / `\git` / `command \git` / `env X=1 git` のようなエイリアス回避・絶対パスの形も含む）に加え、`gh api` の `/pulls` への書き込み（`-X POST` や `-f` / `--input` による暗黙の POST）と GraphQL の `createPullRequest`（`gh api` / `graphql` の文脈にあるものだけ。`grep createPullRequest` のような単なる文字列一致では反応しない）を対象にする。`gh api` は引用の外の区切り（`;` `&` `|` 改行）で分けた区間ごとに見て（括弧・バッククォートは語を分けるだけ）、前置き語（`timeout` / `nix develop -c` / `env -u …` 等）は問わない（`echo gh api … -f x` のような文字列も書き込み扱いになるのは許容する）。`gh api` の GET（PR 一覧・`/pulls/N/comments` の取得など）は対象外。`bash -c "…"` / `eval` / `bash <<EOF` / `… | sh` のようにシェルへ文字列を渡す形は生文字列で見る（ただし `bash -c` / `eval` のときは HEREDOC 本文を除いた生文字列で見る。`cat > x.sh <<'EOF' … EOF` のようにスクリプトを書き出すだけのコマンドは、本文に `eval` や `git commit` の語があっても bash は実行しないため対象外。シェルに流す HEREDOC・パイプは本文そのものが実行されるので従来どおり本文を見る）。引用符の除去に失敗したとき（awk が読めない等）は生文字列で判定し、fail-open にしない。
 
@@ -109,33 +103,33 @@ git 操作はメインセッションが直接実行する（サブエージェ�
 
 CLI ごとの違い：
 
-- Claude Code：`PreToolUse`（deny / ask）と `PermissionRequest`（allow）の二段構え。自動承認条件を満たす単一コマンドは確認なしで通る
+- Claude Code：`PreToolUse`（deny）と `PermissionRequest`（allow / マージだけ確認）の二段構え。マージ以外はツールの種類・コマンドの形を問わず確認なしで通る
 - Grok：`PermissionRequest` が無く `permission_mode = "always-approve"` なので、`PreToolUse` が自動承認条件を満たさない git 書き込みだけ ask にする。force push・保護ブランチ宛・削除系は deny
-- OpenCode：`opencode/plugins/shared-harness.js` が `opencode/hooks/harness.sh` 経由で同じ `pr-mode.sh` を呼び、`PreToolUse` の deny / ask と `PermissionRequest` の allow を permission 評価に反映する。plugin を読み込めない場合は `opencode.json` の ask が残る。`delegated-worker` と通常 subagent は permission で git 書き込みを拒否する
-- Codex：`codex/hooks/guard.sh` が同じ `git-write.sh` を使う拒否専用フック。`PreToolUse` が ask を返せないため、PR のマージ・宛先を判定できない push・`--amend` / `--no-verify` / `-n` も deny する。既定ブランチ以外の commit・push・PR 作成/更新は Codex の承認ポリシーに任せる
+- OpenCode：`opencode/plugins/shared-harness.js` が `opencode/hooks/harness.sh` 経由で同じ `pr-mode.sh` を呼び、`PreToolUse` の deny と `PermissionRequest` の allow を permission 評価に反映する。`pr-request` の allow はフル入力の単一コマンドだけに使い、複合コマンドで設定の ask を消さない。plugin を読み込めない場合は `opencode.json` の ask が残る。`delegated-worker` と通常 subagent は permission で git 書き込みを拒否する
+- Codex：`codex/hooks/guard.sh` が同じ `git-write.sh` を使う拒否専用フック。`PreToolUse` が ask を返せないため、PR のマージ・宛先を判定できない push・`--amend` / `--no-verify` / `-n` も deny する。既定ブランチ以外の commit・push・PR 作成/更新と、`guard-destructive.sh` が確認なしで通す操作は Codex の承認ポリシーに任せる
 - Devin：フックが無い。`devin/config.json` の `ask`（commit / push / `gh pr merge`）と `deny`（force push / `sudo`）、共通指示の「既定ブランチでは作業しない」で守る
 
 ## 破壊的コマンドのガード
 
 `hooks/guard-destructive.sh`（`PreToolUse`/Bash）は、Git 操作の制限とは独立に「正当な用途がほぼ無い、または取り返しがつかない操作」を機構的に止める。**契約は一文**（フック冒頭のコメントと同じ）：
 
-> 解釈できる削除（対象のコマンド置換・HEREDOC・eval を含まず、対象がすべて許可ルートか一時領域に解決できるもの）は確認なし。致命的な対象と、解釈できたうえで許可ルート外の削除は deny。それ以外で削除語を含むものは、何をするコマンドかを説明して ask。
+> 解釈できる削除（対象のコマンド置換・HEREDOC・eval を含まず、対象がすべて許可ルートか一時領域に解決できるもの）は確認なし。致命的な対象と、解釈できたうえで許可ルート外の削除は deny。解釈できない削除・移動、xargs / eval / sh -c 経由、閉じていない引用符・HEREDOC、一括 kill、.git の削除も deny（ask は返さない）。
 
-判定は 4 段構造で、上から順に評価して最初に決まった deny で終了する。ask は保留して最後に 1 つだけ出す（`killall …; rm -rf ~/Documents` のように ask 対象と deny 対象が混ざったコマンドが ask へ格下げされないように）：
+判定は 4 段構造で、上から順に評価して最初に決まった deny で終了する（ask は返さない）：
 
 1. **致命 deny**（生文字列で判定するので引用符の中でも止まる。`eval` / `sh -c` / `… | sh` / `bash <<EOF` のようにシェルへ文字列を渡す形では、その文字列を bash が実行するので元のコマンド文字列全体にも同じ判定を掛ける。`bash -c "rm -rf ~"` は deny）：ルート・ホーム直下の `rm`、`~/.claude` および dotfiles の `.claude` を対象にした `rm` / `mv`（`settings.json`・`~/.claude/CLAUDE.md`・`ai/core.md`・`ai/claude.md`・`ai/install.sh` は単一ファイルの `rm` でも止める）、`.claude` 配下の設定実体（`hooks` / `skills` / `agents` 等）と `ai/`（全CLI共通のグローバル指示）の再帰削除・移動、`curl|sh` 等のリモートスクリプトのパイプ実行（多段パイプ・`bash <(curl …)`・`sh -c "$(curl …)"`・`eval "$(curl …)"`・`source <(curl …)` / `. <(curl …)` の形も含む）、ディスク操作（`diskutil erase` / `apfs delete`・`dd of=/dev/`・`mkfs` 等）
-2. **削除の範囲判定**（`rm` / `rmdir` / `unlink` / `find -delete` / `mv`。`\rm` / `/bin/rm` の表記も含む）：対象を 1 つずつ絶対パスへ解決し、`dev-roots` の各ルートと一時領域（`$TMPDIR`・`/tmp/claude-*`。`TMPDIR` 未設定時は `/tmp` 全体ではなく `/tmp/claude-*` だけ）の**内側**なら確認なしで通す。解決できて外側（`~/Dev` 直下・ホーム・その上・許可ルートそのもの）なら **deny**。解決できない書き方は理由を添えた **ask**。加えて dotfiles リポジトリ自体・`.claude` の設定実体・作業中ディレクトリ自身やその親の再帰削除は deny。相対パスは hook 入力の `cwd` 基準で解決し、glob は手前のディレクトリで判定する。カンマ区切りのブレース展開（`{dist,build}`）は bash と同じ順に展開して各パスを判定する（展開後に外へ出る `{dist,../../../Documents}` は deny）。同じコマンドで削除より前に直線的に実行される単純な代入（`S=/tmp/claude-x && rm -rf $S/work`、`export T=$(mktemp -d)` のように一時領域へ作る mktemp も含む）は値で展開してから同じ判定に掛ける（`D=~/Documents && rm -rf "$D"` は deny）。解決するのは、コマンド全体でその変数名が `$NAME` / `${NAME}` の参照以外に現れるのがその代入 1 か所だけのとき（`read NAME`・`printf -v NAME`・`for NAME in`・2 回目の代入などが 1 つでもあれば解決しない）。削除より前（削除文自身の前置きを含む）に制御構文・`{ }`・`( )`・関数定義がある形、`||` の後の代入、パラメータ展開・mktemp 以外のコマンド置換・削除より後の代入も従来どおり ask
-   - 削除（`rm` / `rmdir` / `unlink` / `find`）では、直線的な `cd /絶対パス && … && rm -rf 相対パス` の移動先を基準にする。同じコマンド内で解決済みの変数や `$HOME` も使える。`cd` 後に `;`・`||` 等を挟む形、条件分岐・別スコープ、`cd -`・引数なし・未解決の変数、相対パス・`~` 表記の `cd` は従来どおり ask。`mv` の `cd` 追跡は対象外。引用符付き `~` の代入（`D="~/orca/workspaces/x/y"`）はシェルで展開されないため解決せず ask に残す
-3. **削除語を含むが構造を解釈できない形** → **ask**：`eval` / `sh -c` / `… | sh` / `bash <<EOF` / `xargs` 経由、引用符や HEREDOC が閉じていない書き方。ただし `sh -c` / `bash -c` 等に渡す引用文字列を切り出せて、中に削除・移動などのガード対象語や未解決の展開がなければ、外側の削除は通常の範囲判定を行う
-4. **git / kill / chmod の ask**（必ず確認ダイアログ。auto modeでも省略されない）：作業ツリー・履歴を壊す git 操作（`reset --hard` / `clean -f` / `checkout`・`switch`・`restore` での全変更破棄（`.` 対象、`-f` / `--force` / `--discard-changes`。`restore --staged .` は index だけなので対象外）/ `branch -D` / `stash drop`・`clear` / rebase（`--continue` / `--abort` 等の進行操作は対象外）/ `pull --rebase` / `commit --amend` / `filter-branch` / `reflog expire`・`update-ref -d` / `worktree remove --force`。`git checkout -b feat/add-config` のようなブランチ名は force 系と誤認しない）、`killall` / `pkill` / `kill -1` / `kill <sig> -1`（`kill` の直接引数だけで判定し、`kill $(head -1 …)`・`kill $(lsof -ti :3000)` は一括指定と見なさない）、絶対パスへの再帰 `chmod` / `chown`、リポジトリの `.git` の `rm`
+2. **削除の範囲判定**（`rm` / `rmdir` / `unlink` / `find -delete` / `mv`。`\rm` / `/bin/rm` の表記も含む）：対象を 1 つずつ絶対パスへ解決し、`dev-roots` の各ルートと一時領域（`$TMPDIR`・`/tmp/claude-*`。`TMPDIR` 未設定時は `/tmp` 全体ではなく `/tmp/claude-*` だけ）の**内側**なら確認なしで通す。解決できて外側（`~/Dev` 直下・ホーム・その上・許可ルートそのもの）なら **deny**。解決できない書き方は **deny**。リンクされた git worktree のルート（直下の `.git` が `gitdir: …/worktrees/…` を指すファイル）を `rm -rf` する場合は、許可ルート外でも通す（ルート / ホーム直下 / `~/.claude` 等の致命対象 deny が優先）。加えて dotfiles リポジトリ自体・`.claude` の設定実体・作業中ディレクトリ自身やその親の再帰削除は deny。相対パスは hook 入力の `cwd` 基準で解決し、glob は手前のディレクトリで判定する。カンマ区切りのブレース展開（`{dist,build}`）は bash と同じ順に展開して各パスを判定する（展開後に外へ出る `{dist,../../../Documents}` は deny）。同じコマンドで削除より前に直線的に実行される単純な代入（`S=/tmp/claude-x && rm -rf $S/work`、`export T=$(mktemp -d)` のように一時領域へ作る mktemp も含む）は値で展開してから同じ判定に掛ける（`D=~/Documents && rm -rf "$D"` は deny）。解決するのは、コマンド全体でその変数名が `$NAME` / `${NAME}` の参照以外に現れるのがその代入 1 か所だけのとき（`read NAME`・`printf -v NAME`・`for NAME in`・2 回目の代入などが 1 つでもあれば解決しない）。削除より前（削除文自身の前置きを含む）に制御構文・`{ }`・`( )`・関数定義がある形、`||` の後の代入、パラメータ展開・mktemp 以外のコマンド置換・削除より後の代入も deny
+   - 削除（`rm` / `rmdir` / `unlink` / `find`）では、直線的な `cd /絶対パス && … && rm -rf 相対パス` の移動先を基準にする。同じコマンド内で解決済みの変数や `$HOME` も使える。`cd` 後に `;`・`||` 等を挟む形、条件分岐・別スコープ、`cd -`・引数なし・未解決の変数、相対パス・`~` 表記の `cd` は deny。`mv` の `cd` 追跡は対象外。引用符付き `~` の代入（`D="~/orca/workspaces/x/y"`）はシェルで展開されないため解決せず deny
+3. **削除語を含むが構造を解釈できない形** → **deny**：`eval` / `sh -c` / `… | sh` / `bash <<EOF` / `xargs` 経由、引用符や HEREDOC が閉じていない書き方。ただし `sh -c` / `bash -c` 等に渡す引用文字列を切り出せて、中に削除・移動などのガード対象語や未解決の展開がなければ、外側の削除は通常の範囲判定を行う
+4. **一括 kill と `.git` の削除は deny**：`killall` / `pkill` / `kill -1` / `kill <sig> -1`（`kill` の直接引数だけで判定し、`kill $(head -1 …)`・`kill $(lsof -ti :3000)` は一括指定と見なさない）、リポジトリの `.git` の `rm`。作業ツリー・履歴を壊す git 操作（`reset --hard` / `clean -f` / `checkout`・`switch`・`restore` での全変更破棄 / `branch -D` / `stash drop`・`clear` / rebase / `pull --rebase` / `commit --amend` / `filter-branch` / `reflog expire`・`update-ref -d` / `worktree remove --force`）と絶対パスへの再帰 `chmod` / `chown` は何も返さない（確認なし）
 
 **許可ルートの定義は `dev-roots` だけ**（現在 `~/Dev/kaishi`・`~/Dev/seino914`・`~/Dev/hobby`・`~/orca/workspaces`）。フックは `ALLOWED_ROOTS`（判定）と deny 理由文の表示に使い、`nix/home.nix` の `devDirs` とテスト DR1〜DR3 も同じファイルを読む。
 
-**ask の理由文は「何をするコマンドか（対象を含む 1 文）」＋「なぜ確認が要るか（1 文）」の順**で書く。「確認してください」だけの文は書かない。対象を解決できないときは理由コード（`?cd` / `?var` / `?subst` / `?range` / `?user` / `?cwd`）ごとに `explain_unresolved` が文を作り、git 系は `git_ask 'regex' '説明'` の表でサブコマンドごとの説明を持つ。理由文の書式はテスト X01〜X19 で固定してあるので、説明を変えたらテストも変える。
+**deny の理由文は「何をするコマンドか（対象を含む 1 文）」＋「対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）」の順**で書く。対象を解決できないときは理由コード（`?cd` / `?var` / `?subst` / `?range` / `?user` / `?cwd`）ごとに `explain_unresolved` が文を作る。理由文の書式はテスト X01〜X21 で固定してあるので、説明を変えたらテストも変える。
 
-判定は `hooks/lib/strip-shell.awk` で引用符の中身と HEREDOC 本文・行末コメントを除いた文字列に対して行い、コミットメッセージ等に含まれるリテラル（`"fix: rm -rf / の誤爆"` など）を誤検知しない（`rm` / `mv` の対象パスを取り出す版でも、引用符の中の空白・`;` `&` `|` を `\001` に置き換えて中身を 1 トークンにする）。`git rm` / `npm rm` / `docker rm` 等のサブコマンドの `rm` も削除判定に掛けない。行継続（`\` + 改行）と行末の演算子（`|` `&&` `||`）は 1 行に結合してから判定する。引用符の扱いは bash に合わせる：`$'…'`（ANSI-C 引用）も引用として扱う一方、二重引用符の中のバッククォート置換と引用符無しタグの HEREDOC（`<<EOF`）本文の `$( )` / バッククォートは bash が実際に実行するので判定対象に戻す（`<<'EOF'` / `<<"EOF"` / `<<\EOF` の本文は展開されないので捨てる）。この awk は「解釈できるか」の分類器であり、取りこぼしは ask に倒れるので網羅性は追わない。`git push` の force / delete は `pr-mode.sh` が扱うためここでは見ない。
+判定は `hooks/lib/strip-shell.awk` で引用符の中身と HEREDOC 本文・行末コメントを除いた文字列に対して行い、コミットメッセージ等に含まれるリテラル（`"fix: rm -rf / の誤爆"` など）を誤検知しない（`rm` / `mv` の対象パスを取り出す版でも、引用符の中の空白・`;` `&` `|` を `\001` に置き換えて中身を 1 トークンにする）。`git rm` / `npm rm` / `docker rm` 等のサブコマンドの `rm` も削除判定に掛けない。行継続（`\` + 改行）と行末の演算子（`|` `&&` `||`）は 1 行に結合してから判定する。引用符の扱いは bash に合わせる：`$'…'`（ANSI-C 引用）も引用として扱う一方、二重引用符の中のバッククォート置換と引用符無しタグの HEREDOC（`<<EOF`）本文の `$( )` / バッククォートは bash が実際に実行するので判定対象に戻す（`<<'EOF'` / `<<"EOF"` / `<<\EOF` の本文は展開されないので捨てる）。この awk は「解釈できるか」の分類器であり、取りこぼしは deny に倒れるので網羅性は追わない。`git push` の force / delete は `pr-mode.sh` が扱うためここでは見ない。
 
-**設計方針**：解釈できない書き方は「穴」ではなく「ダイアログ（ask）」に倒す。新しい書き方が見つかっても個別の正規表現を足すのではなく、「解釈不能に分類されて ask になるか」を確認するだけにする（判断基準は `docs/harness-plan-2026-09-05.md` の原則 1〜6、差分の詳細は `docs/harness-changes-2026-09-05.md`。どちらも `.gitignore` 対象の手元資料）。
+**設計方針**：解釈できない削除は「穴」ではなく「deny」に倒す。新しい書き方が見つかっても個別の正規表現を足すのではなく、「解釈不能に分類されて deny になるか」を確認するだけにする（判断基準は `docs/harness-plan-2026-09-05.md` の原則 1〜6、差分の詳細は `docs/harness-changes-2026-09-05.md`。どちらも `.gitignore` 対象の手元資料）。
 
 ### 既知の抜け道
 
@@ -147,7 +141,7 @@ CLI ごとの違い：
 - `trash` / `rsync --delete` / `> file` での空化 など、`rm` 以外の削除手段（`guard-destructive.sh`）
 - シンボリックリンク経由のパス（リンクを解決しない）。`find` は起点ディレクトリだけを検査する
 
-なお `eval` / `sh -c` / `bash -c` のようにシェルへ文字列を渡す形は、保護ブランチの判定に掛からない（git alias と同じ既知の抜け道）。`pr-mode.sh` は状態を持たず、解釈できない形を deny に倒すのではなく自動承認しないだけなので、CLI 側の通常の permission 判定（Claude は確認ダイアログ、Codex は承認ポリシー）に委ねる。共通指示の「既定ブランチでは commit・push しない」で抑止する。
+なお `eval` / `sh -c` / `bash -c` のようにシェルへ文字列を渡す形は、保護ブランチの判定に掛からない（git alias と同じ既知の抜け道）。`pr-mode.sh` は状態を持たず、解釈できない形を deny に倒すのではなく自動承認しないだけなので、CLI 側の通常の permission 判定（Claude は `PermissionRequest` の allow、Codex は承認ポリシー）に委ねる。共通指示の「既定ブランチでは commit・push しない」で抑止する。
 
 ## 設定ファイルの自動検証
 
@@ -166,7 +160,7 @@ CLI ごとの違い：
 bash .claude/tests/run.sh
 ```
 
-各CLIの設定 JSON（`settings.json`・`opencode/*.json`・`codex/hooks.json`・`devin/config.json`）の構文、シェルスクリプト全体の `bash -n`（`hooks/`・`hooks/lib/`・`setup.sh`・`skills/*/scripts/`・`tests/`・`bootstrap.sh`・`ai/*.sh`・`codex/hooks/*.sh`・`opencode/setup.sh`）、`hooks/lib/*.awk` の構文、SKILL.md / agents の frontmatter（1行目の `---`・`name:`・`description:` に加え、閉じの `---` があること）、`settings.json` のフック・`statusLine` の登録元検査、およびフック（pr-mode / guard-destructive / verify-gate / validate-claude-config、加えて Grok 互換の入出力と Codex の `codex/hooks/guard.sh`）と共通指示の配布（ai-install）のテーブル駆動テストを実行する。guard のテストには、許可ルート内の通常の削除が確認なしで通ることを固定する不変条件セクション（IV01〜IV13）、`dev-roots` の各ルートを検査する DR1〜DR3、`dev-roots` の文法（行内コメント・空白・`~/` 以外の行）を作業コピーで検査する DC1〜DC4、同じコマンド内の代入の解決（解決できる形・ask に残す形）を検査する V01〜V47、ask / deny の理由文が「何をするコマンドか」で始まることを検査する X01〜X19 が含まれる。`tests/` 自体は `setup.sh` の配布対象外（`~/.claude` にはリンクされない）。test-pr-mode.sh は `HOME` を一時ディレクトリに向けて実行するので、壊れた入力や `session_id` 欠落のケースを流してもフックの本物のログ `~/.claude/pr-mode.log` には書き込まない（run.sh がテスト前後の行数で検査する。E07 はそのログの文言が文字化けしていないことも見る）。`hooks/pr-mode.sh`・`hooks/guard-destructive.sh`・`hooks/verify-gate.sh`・`hooks/validate-claude-config.sh`・`hooks/lib/` や `ai/`・`codex/`・`devin/`・`opencode/` の設定を変更したときは必ず実行して通す（`hooks/verify-gate.sh` が、通すまでターンを終えさせない）。作業コピーのフックを試すときは `HOOKS_DIR=/path/to/hooks bash .claude/tests/run.sh`。
+各CLIの設定 JSON（`settings.json`・`opencode/*.json`・`codex/hooks.json`・`devin/config.json`）の構文、シェルスクリプト全体の `bash -n`（`hooks/`・`hooks/lib/`・`setup.sh`・`skills/*/scripts/`・`tests/`・`bootstrap.sh`・`ai/*.sh`・`codex/hooks/*.sh`・`opencode/setup.sh`）、`hooks/lib/*.awk` の構文、SKILL.md / agents の frontmatter（1行目の `---`・`name:`・`description:` に加え、閉じの `---` があること）、`settings.json` のフック・`statusLine` の登録元検査、およびフック（pr-mode / guard-destructive / verify-gate / validate-claude-config、加えて Grok 互換の入出力と Codex の `codex/hooks/guard.sh`）と共通指示の配布（ai-install）のテーブル駆動テストを実行する。guard のテストには、許可ルート内の通常の削除が確認なしで通ることを固定する不変条件セクション（IV01〜IV13）、`dev-roots` の各ルートを検査する DR1〜DR3、`dev-roots` の文法（行内コメント・空白・`~/` 以外の行）を作業コピーで検査する DC1〜DC4、同じコマンド内の代入の解決（解決できる形・deny になる形）を検査する V01〜V47、リンクされた git worktree のルートを許可する W01〜W03、deny の理由文が「何をするコマンドか」で始まることを検査する X01〜X21 が含まれる。`tests/` 自体は `setup.sh` の配布対象外（`~/.claude` にはリンクされない）。test-pr-mode.sh は `HOME` を一時ディレクトリに向けて実行するので、壊れた入力や `session_id` 欠落のケースを流してもフックの本物のログ `~/.claude/pr-mode.log` には書き込まない（run.sh がテスト前後の行数で検査する。E07 はそのログの文言が文字化けしていないことも見る）。`hooks/pr-mode.sh`・`hooks/guard-destructive.sh`・`hooks/verify-gate.sh`・`hooks/validate-claude-config.sh`・`hooks/lib/` や `ai/`・`codex/`・`devin/`・`opencode/` の設定を変更したときは必ず実行して通す（`hooks/verify-gate.sh` が、通すまでターンを終えさせない）。作業コピーのフックを試すときは `HOOKS_DIR=/path/to/hooks bash .claude/tests/run.sh`。
 
 ## iPhoneプッシュ通知（claude-notify）
 
