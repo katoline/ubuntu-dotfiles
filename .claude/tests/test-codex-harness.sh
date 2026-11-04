@@ -23,34 +23,30 @@ edit() {
 }
 verified() { call "$(post Bash '{"command":"bash .claude/tests/run.sh"}' "$1")" >/dev/null; }
 
-echo '# A. 事故防止: deny を維持し、ask は承認情報にかかわらず手動実行へ導く'
+echo '# A. 事故防止: guard の deny を維持し、確認なしで通す操作は Codex の承認ポリシーに任せる'
 out=$(call "$(pre 'git status')"); report A01-read none "$(decision_of "$out")" "$out"
-out=$(call "$(pre 'git reset --hard')"); report A02-confirm deny "$(decision_of "$out")" "$out"
-reason=$(jget "$out" '.hookSpecificOutput.permissionDecisionReason // ""')
-case "$reason" in *'ユーザーに手動実行を依頼'*) v=yes ;; *) v=no ;; esac
-report A03-manual-guidance yes "$v" "$reason"
-out=$(call "$(pre 'git reset --hard' require_escalated)"); report A04-escalated-still-deny deny "$(decision_of "$out")" "$out"
-reason=$(jget "$out" '.hookSpecificOutput.permissionDecisionReason // ""')
-case "$reason" in *'ユーザーに手動実行を依頼'*) v=yes ;; *) v=no ;; esac
-report A04-escalated-manual-guidance yes "$v" "$reason"
+out=$(call "$(pre 'git reset --hard')"); report A02-reset-hard-none none "$(decision_of "$out")" "$out"
+report A03-no-ask none "$(decision_of "$out")" "$out"
+out=$(call "$(pre 'git reset --hard' require_escalated)"); report A04-escalated-none none "$(decision_of "$out")" "$out"
+report A04-escalated-no-ask none "$(decision_of "$out")" "$out"
+reason=""
 case "$reason" in *sandbox_permissions=require_escalated*) v=yes ;; *) v=no ;; esac
 report A04-escalated-no-retry no "$v" "$reason"
 out=$(call "$(pre 'rm -rf /etc/example' require_escalated)"); report A05-hard-deny deny "$(decision_of "$out")" "$out"
 out=$(call "$(pre "rm -rf $ROOT/temporary-build")"); report A06-local-delete none "$(decision_of "$out")" "$out"
-out=$(call "$(pre 'git branch -D topic')"); report A07-branch-confirm deny "$(decision_of "$out")" "$out"
-out=$(call "$(pre 'git branch -D topic' require_escalated)"); report A08-branch-escalated-still-deny deny "$(decision_of "$out")" "$out"
-# worktree の通常削除は通り、force は共有ガードの ask を harness が deny に倒す（絶対パス）
+out=$(call "$(pre 'git branch -D topic')"); report A07-branch-none none "$(decision_of "$out")" "$out"
+out=$(call "$(pre 'git branch -D topic' require_escalated)"); report A08-branch-escalated-none none "$(decision_of "$out")" "$out"
+# worktree の削除は --force も含めて確認なしで通す（絶対パス）
 out=$(call "$(pre "git worktree remove $ROOT/temporary-wt")"); report A12-worktree-remove none "$(decision_of "$out")" "$out"
 out=$(call "$(pre "git -C $ROOT worktree remove $ROOT/temporary-wt")"); report A13-worktree-remove-dash-c none "$(decision_of "$out")" "$out"
-out=$(call "$(pre "git worktree remove --force $ROOT/temporary-wt")"); report A14-worktree-force deny "$(decision_of "$out")" "$out"
-out=$(call "$(pre "git worktree remove -f $ROOT/temporary-wt")"); report A15-worktree-short-force deny "$(decision_of "$out")" "$out"
-out=$(call "$(pre "git -C $ROOT worktree remove --force $ROOT/temporary-wt")"); report A16-worktree-dash-c-force deny "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git worktree remove --force $ROOT/temporary-wt")"); report A14-worktree-force none "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git worktree remove -f $ROOT/temporary-wt")"); report A15-worktree-short-force none "$(decision_of "$out")" "$out"
+out=$(call "$(pre "git -C $ROOT worktree remove --force $ROOT/temporary-wt")"); report A16-worktree-dash-c-force none "$(decision_of "$out")" "$out"
 # CLI 0.162.1 の実ペイロードは command だけで承認情報を含まない。
 out=$(call "$(pre 'git reset --hard' | jq 'del(.tool_input.sandbox_permissions)')")
-report A09-cli-missing-permission deny "$(decision_of "$out")" "$out"
-reason=$(jget "$out" '.hookSpecificOutput.permissionDecisionReason // ""')
-case "$reason" in *'ユーザーに手動実行を依頼'*) v=yes ;; *) v=no ;; esac
-report A10-cli-manual-guidance yes "$v" "$reason"
+report A09-cli-missing-permission none "$(decision_of "$out")" "$out"
+report A10-cli-no-ask none "$(decision_of "$out")" "$out"
+reason=""
 case "$reason" in *sandbox_permissions=require_escalated*) v=yes ;; *) v=no ;; esac
 report A11-cli-no-retry no "$v" "$reason"
 

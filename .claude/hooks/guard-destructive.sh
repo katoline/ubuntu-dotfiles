@@ -7,10 +7,10 @@
 # 契約（一文）:
 #   解釈できる削除（対象のコマンド置換・HEREDOC・eval を含まず、対象がすべて許可ルートか一時領域に
 #   解決できるもの）は確認なし。致命的な対象と、解釈できたうえで許可ルート外の削除は deny。
-#   それ以外で削除語を含むものは、何をするコマンドかを説明して ask。
+#   解釈できない削除・移動、xargs / eval / sh -c 経由、閉じていない引用符・HEREDOC、一括 kill、
+#   .git の削除は deny（ask は返さない）。
 #
-# 判定は上から順に行い、最初に決まった deny で終了する。ask は保留して最後に 1 つだけ出す
-# （ask 対象と deny 対象を 1 コマンドに混ぜても deny が ask に格下げされない）:
+# 判定は上から順に行い、最初に決まった deny で終了する（ask は一切返さない）:
 #   1. 致命 deny …… ルート / ホーム直下 / ~/.claude / dotfiles の .claude を対象にした rm・mv、
 #                    curl | sh 系のリモートスクリプト実行、ディスク操作。生文字列（引用符の中も含む）で見る。
 #                    シェルへ文字列を渡す形（eval / sh -c / … | sh / bash <<EOF）では、その文字列を bash が
@@ -18,18 +18,22 @@
 #   2. 削除の範囲判定 … rm / rmdir / unlink / find -delete / mv の対象を 1 つずつ解決する
 #        解決できて許可ルート（.claude/dev-roots の各行）か一時領域（$TMPDIR・/tmp/claude-*）の内側 → 通す
 #        解決できて外側（~/Dev 直下・ホーム・許可ルートそのもの）→ deny
-#        解決できない（未知の変数・コマンド置換・追跡できない cd・範囲形ブレース・~user）→ 理由を添えて ask
+#        解決できない（未知の変数・コマンド置換・追跡できない cd・範囲形ブレース・~user）→ deny
+#        リンクされた git worktree のルート（直下の .git が gitdir: …/worktrees/… を指す）を
+#        rm -rf で消す場合は、許可ルート外でも通す（致命対象の deny が優先）
 #        同じコマンドで削除より前に直線的に実行される単純な代入（S=/tmp/x && rm -rf $S/w、T=$(mktemp -d)）は
 #        値で展開してから判定する。変数名が代入以外の形（read・for 等）でも現れる、条件付き・別スコープ・
-#        関数の中の削除などは解決せず ask（詳細は split_stmts の上）
+#        関数の中の削除などは解決せず deny（詳細は split_stmts の上）
 #        削除前の直線的な絶対 cd は成功が分かる && の連鎖に限って基準にする（mv は従来どおり）
 #        dotfiles 自体・.claude 配下の設定実体・作業中ディレクトリの再帰削除 → deny
 #   3. 削除語を含むが構造を解釈できない形 … eval / sh -c / … | sh / bash <<EOF / xargs 経由、
-#                    引用符や HEREDOC が閉じていない → ask
-#   4. git / kill / chmod の ask …… 作業ツリー・履歴を壊す git 操作、一括 kill、絶対パスへの再帰 chmod。
-#                    サブコマンドごとに「何をするか」を説明する
+#                    引用符や HEREDOC が閉じていない → deny
+#   4. 一括 kill（killall / pkill / kill -1）と .git の削除 → deny
 #
-# ask の理由文は「何をするコマンドか（対象を含む 1 文）」＋「なぜ確認が要るか（1 文）」の順で書く。
+# deny の理由文は「何をするコマンドか（対象を含む 1 文）」＋「対象を具体的なパスで書き直して
+# 再実行してください（必要ならユーザーに実行を依頼）」の順で書く。
+# 破壊的な git 操作（reset --hard / clean / rebase 等）と絶対パスへの再帰 chmod / chown は
+# 何も返さない（確認なし）。作業ツリー・履歴を壊さないことは共通指示で守る。
 #
 # 判定材料:
 #   - lib/strip-shell.awk で引用符の中身と HEREDOC 本文を除いた文字列（s）。コミットメッセージ等の
@@ -41,8 +45,8 @@
 #
 # 範囲外: bash script.sh のようなスクリプト経由の間接実行、trash / rsync --delete 等の別手段、
 # シンボリックリンク経由のパス。CLAUDE.md の指示・permissions.ask・auto mode の分類器と併用する
-# 多層防御の一層と位置づけ、構文の網羅は追わない（解釈できない形は ask に倒す）。
-# git push の force / delete は pr-mode.sh が扱う。何が起きても exit 0（判定不能なら通常の permission 判定に委ねる）。
+# 多層防御の一層と位置づけ、構文の網羅は追わない（解釈できない削除は deny に倒す）。
+# git push の force / delete は pr-mode.sh が扱う。何が起きても exit 0（判定不能なら deny せず通す）。
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
 STRIP_AWK="$(dirname "$SELF")/lib/strip-shell.awk"
@@ -58,9 +62,8 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
 
 # 理由文の \001（引用符の中の空白の置き換え）は bash の置換で戻す（外部コマンドの tr はロケール依存で落ちる）
 deny() { local r=${1//$'\001'/ }; jq -cn --arg r "$r" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
-# ask は即座に出さず保留し、deny の判定をすべて通したあと末尾で出す（最初の ask だけ残す）
-pending_ask=""
-ask()  { [ -n "$pending_ask" ] || pending_ask=${1//$'\001'/ }; return 0; }
+# 解決できない削除・移動は deny。理由文の末尾に対象を書き直すよう促す一文を足す。
+deny_unresolved() { deny "$(explain_unresolved "$1" "$2" "$3")。対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）"; }
 
 # ---- 許可ルート（.claude/dev-roots。1 行 1 パス、~/ 始まり、# はコメント）----
 ALLOWED_ROOTS=""; ROOTS_DISP=""
@@ -98,7 +101,6 @@ s=${s//\\$'\n'/ }; rq=${rq//\\$'\n'/ }
 s=$(printf '%s\n' "$s" | join_lines); rq=$(printf '%s\n' "$rq" | join_lines)
 PH=$'\001'
 s1=$(printf '%s' "$s" | tr '\n' ';')      # 改行を区切りにした 1 行版
-sflat=$(printf '%s' "$s" | tr '\n' ' ')   # git のオプション検査用（閉じ行の --amend 等を ";" に阻まれず見る）
 # git rm / npm rm 等のサブコマンド "rm" はファイル削除ではないので、rm の抽出に掛からないよう "git-rm" に潰す
 raw1=$(printf '%s' "$rq" | tr '\n' ';' | sed -E 's/(^|[[:space:];&|(`])(git|npm|pnpm|bun|cargo|docker|podman|kubectl|helm|terraform)[[:space:]]+rm([[:space:]]|$)/\1\2-rm\3/g')
 
@@ -158,7 +160,7 @@ fatal_deny() {
 fatal_deny "$raw1" "$s1"
 # シェルへ文字列を渡す形（eval / bash -c / sh -c / … | sh / bash <<EOF。単語としての eval / sh だけ。tests/eval や ssh では発動しない）は、
 # その文字列を bash が実行するので、元のコマンド文字列全体（引用符の中身・HEREDOC 本文を含む）にも致命 deny を掛ける。
-# 致命対象でなければ段 3 で ask になる
+# 致命対象でなければ段 3 で deny になる
 SHELL_STR_RE='(^|[[:space:];&|(`])(eval[[:space:]]|([^[:space:]]*/)?(ba|z|da|k)?sh[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*c[A-Za-z]*([[:space:]]|$))|\|[[:space:]]*([^[:space:]]*/)?(ba|z|da|k)?sh([[:space:]]|$)|(^|[[:space:];&|(`])([^[:space:]]*/)?(ba|z|da|k)?sh([[:space:]]+-[A-Za-z]+)*[[:space:]]*<<'
 shell_string=0
 if printf '%s' "$raw1" | grep -Eq -- "$SHELL_STR_RE"; then
@@ -243,7 +245,7 @@ set_has_cd() { has_cd=0; printf '%s' "$1" | grep -Eq -- "${SEP}(cd|pushd)([[:spa
 # $(mktemp …)（一時領域に作るものだけ）。値の中の変数は $HOME・$TMPDIR と先に解決済みの変数だけ。
 # 変数を解決してよいのは、コマンド全体で NAME が $NAME / ${NAME} の参照以外に現れるのがその代入 1 か所だけのとき
 # （read NAME・printf -v NAME・for NAME in・unset NAME・2 回目の代入などが 1 つでもあれば解決しない）。
-# ほかに次の場合も解決しない（従来どおり ?var で ask）: 削除より前（削除文自身の前置きを含む）に制御構文・
+# ほかに次の場合も解決しない（?var として deny）: 削除より前（削除文自身の前置きを含む）に制御構文・
 # { }・( )・関数定義・eval・source がある、&& の後の代入から削除まで && 以外でつながる、|| / | の後の代入、
 # ${NAME:-x} 等のパラメータ展開、HOME / TMPDIR 自体への代入
 VARENV=""; VTAINT=" "
@@ -580,26 +582,38 @@ expand_braces() {
   set +f
 }
 
-# 解決できなかった対象の ask 理由文（引数: 理由コード, トークン, 動作）
+# 解決できなかった対象の deny 理由文（引数: 理由コード, トークン, 動作）
 explain_unresolved() {
   local code="$1" tok="$2" act="$3"
   case "$code" in
-    '?cd')    printf '%s' "cd した先を基準に '${tok}' を${act}するコマンドです。cd 先が分からず対象を特定できないため確認してください" ;;
-    '?var')   printf '%s' "変数を含む '${tok}' を${act}するコマンドです。変数の値が分からず対象を特定できないため確認してください" ;;
-    '?subst') printf '%s' "コマンドの出力結果 '${tok}' を${act}するコマンドです。実行するまで対象が決まらないため確認してください" ;;
-    '?range') printf '%s' "ブレース展開 '${tok}' の結果を${act}するコマンドです。範囲形・入れ子は展開後のパスを特定できないため確認してください" ;;
-    '?user')  printf '%s' "~user 形式のパス '${tok}' を${act}するコマンドです。展開先を特定できないため確認してください" ;;
-    *)        printf '%s' "相対パス '${tok}' を${act}するコマンドです。作業ディレクトリが分からず対象を特定できないため確認してください" ;;
+    '?cd')    printf '%s' "cd した先を基準に '${tok}' を${act}するコマンドです。cd 先が分からず対象を特定できません" ;;
+    '?var')   printf '%s' "変数を含む '${tok}' を${act}するコマンドです。変数の値が分からず対象を特定できません" ;;
+    '?subst') printf '%s' "コマンドの出力結果 '${tok}' を${act}するコマンドです。実行するまで対象が決まりません" ;;
+    '?range') printf '%s' "ブレース展開 '${tok}' の結果を${act}するコマンドです。範囲形・入れ子は展開後のパスを特定できません" ;;
+    '?user')  printf '%s' "~user 形式のパス '${tok}' を${act}するコマンドです。展開先を特定できません" ;;
+    *)        printf '%s' "相対パス '${tok}' を${act}するコマンドです。作業ディレクトリが分からず対象を特定できません" ;;
   esac
+}
+
+# リンクされた git worktree のルートか（直下の .git が gitdir: …/worktrees/… を指すファイル）
+is_linked_worktree_root() {
+  local p="$1" line
+  [ -f "$p/.git" ] || return 1
+  IFS= read -r line < "$p/.git" || return 1
+  case "$line" in gitdir:*worktrees/*) return 0 ;; esac
+  return 1
 }
 
 # 解決済みの削除対象 1 件を検査する（引数: resolve_target の結果, 再帰フラグ, 変数適用後のトークン）。deny 条件に当たれば即終了
 check_one_target() {
-  local r="$1" rec="$2" tok="$3" mode n relative=1
+  local r="$1" rec="$2" tok="$3" mode n relative=1 wt_root=0
   tok=${tok//[\"\']/}
   case "$tok" in /* | '~'* | '$'*) relative=0 ;; esac
   mode="dir"; case "$r" in A:*) mode="dotglob"; r=${r#A:} ;; G:*) mode="glob"; r=${r#G:} ;; esac
-  is_allowed_path "$r" || deny "削除は ${ROOTS_DISP} と一時領域の配下でのみ許可されています（対象: ${r}）"
+  # リンクされた git worktree のルートを rm -rf する場合は、許可ルート外でも通す
+  # （ルート / ホーム直下 / ~/.claude 等の致命対象は段 1 で deny 済み）
+  if [ "$rec" -eq 1 ] && [ "$mode" = dir ] && is_linked_worktree_root "$r"; then wt_root=1; fi
+  [ "$wt_root" -eq 1 ] || is_allowed_path "$r" || deny "削除は ${ROOTS_DISP} と一時領域の配下でのみ許可されています（対象: ${r}）"
   # settings.json・ai/ の共通指示と ~/.claude/CLAUDE.md はハーネスそのもの（消えると全プロジェクト・全CLIの permissions・共通指示が失われる）なので単一ファイルでも止める
   case "$r" in
     *dotfiles/.claude/settings.json | "$HOME/.claude/CLAUDE.md")
@@ -656,7 +670,7 @@ check_targets() { # 引数: 種別（rm|glob|dotglob）, トークン列（改�
     while IFS= read -r ex; do
       [ -n "$ex" ] || continue
       case "$ex" in '?'*) r="$ex" ;; *) r=$(resolve_target "$ex" "$kind") ;; esac
-      case "$r" in '?'*) ask "$(explain_unresolved "$r" "$tok" 削除)"; continue ;; esac
+      case "$r" in '?'*) deny_unresolved "$r" "$tok" 削除 ;; esac
       check_one_target "$r" "$rec" "$ex"
     done < <(expand_braces "$(apply_varenv "$tok")")
   done <<EOF
@@ -692,13 +706,13 @@ varenv_reset
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   varenv_for_seg "$seg"
-  case "$seg" in *xargs*) ask "前のコマンドの出力を xargs で受けて削除するコマンドです。対象が実行時に決まるため確認してください"; continue ;; esac
+  case "$seg" in *xargs*) deny '前のコマンドの出力を xargs で受けて削除するコマンドです。対象が実行時に決まるため拒否します。対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）' ;; esac
   set_delete_cwd
   seg=$(printf '%s' "$seg" | strip_cmdword 'rm|rmdir|unlink')
   check_targets rm "$(printf '%s' "$seg" | tr ' \t' '\n\n')"
 done < <(extract_segs 'rm|rmdir|unlink')
 printf '%s' "$raw1" | grep -Eq -- "xargs[^;&|]*[[:space:]](rm|rmdir|unlink)([[:space:]]|$)" \
-  && ask "前のコマンドの出力を xargs で受けて削除するコマンドです。対象が実行時に決まるため確認してください"
+  && deny '前のコマンドの出力を xargs で受けて削除するコマンドです。対象が実行時に決まるため拒否します。対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）'
 
 # mv（移動元だけを見る。-t DIR / --target-directory=DIR の形は残りすべてが移動元、それ以外は最後の引数が移動先）
 varenv_reset
@@ -722,8 +736,8 @@ while IFS= read -r seg; do
       case "$ex" in '?'*) r="$ex" ;; *) r=$(resolve_target "$ex" mv) ;; esac
       case "$r" in
         '?'*)
-          # mv の保護対象は .claude / dotfiles だけなので、それを指しうる書き方のときだけ ask（変数入りのビルド成果物の移動などは通す）
-          case "$tok" in *.claude* | *dotfiles*) ask "$(explain_unresolved "$r" "$tok" 移動)" ;; esac
+          # mv の保護対象は .claude / dotfiles だけなので、それを指しうる書き方のときだけ deny（変数入りのビルド成果物の移動などは通す）
+          case "$tok" in *.claude* | *dotfiles*) deny_unresolved "$r" "$tok" 移動 ;; esac
           continue ;;
       esac
       check_one_mv_source "$r"
@@ -751,54 +765,24 @@ while IFS= read -r seg; do
   check_targets "$kind" "${start:-.}"
 done < <(extract_segs find)
 
-# ---- 3. 削除語を含むが構造を解釈できない形 → ask ----
-# 無害なリテラルの -c 本文以外は従来どおり ask（致命対象は段 1 で deny 済み）。
+# ---- 3. 削除語を含むが構造を解釈できない形 → deny ----
+# 無害なリテラルの -c 本文以外は deny（致命対象は段 1 で deny 済み）。
 # 引用符の中身も HEREDOC 本文も見る必要があるので元のコマンド文字列で判定する
 if [ "$shell_opaque" -eq 1 ]; then
-  printf '%s' "$cmd" | grep -Eq -- "$DEL_RE" && ask "文字列をシェルに渡して実行し、その中で削除を行うコマンドです。中身を機械的に判定できないため確認してください"
+  printf '%s' "$cmd" | grep -Eq -- "$DEL_RE" \
+    && deny '文字列をシェルに渡して実行し、その中で削除を行うコマンドです。中身を機械的に判定できないため拒否します。対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）'
 fi
 if [ "$parse_failed" -eq 1 ]; then
-  printf '%s' "$cmd" | grep -Eq -- "$DEL_RE" && ask "引用符または HEREDOC が閉じておらず構文を解釈できないコマンドです。削除を含むため、意図した形か確認してください"
+  printf '%s' "$cmd" | grep -Eq -- "$DEL_RE" \
+    && deny '引用符または HEREDOC が閉じておらず構文を解釈できないコマンドです。削除を含むため拒否します。対象を具体的なパスで書き直して再実行してください（必要ならユーザーに実行を依頼）'
 fi
 
-# ---- 4. git / kill / chmod の ask（サブコマンドごとに何をするかを説明する）----
-GIT_RE="${SEP}git[[:space:]]+((-[cC]|--git-dir|--work-tree)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[A-Za-z][^[:space:]]*[[:space:]]+)*"
-# rebase の進行操作（--continue / --abort 等）は確認済みの rebase の続き、clean の --dry-run / -n は何も消さないので対象外
-gflat=$(printf '%s' "$sflat" | sed -E 's/rebase[[:space:]]+--(continue|abort|skip|quit|edit-todo|show-current-patch)/rebase-ctl/g; s/clean[[:space:]]+([^;|&]*[[:space:]])?(-[A-Za-z]*n[A-Za-z]*|--dry-run)([[:space:]]|$)/clean-dry\3/g')
-git_ask() { printf '%s' "$gflat" | grep -Eq -- "${GIT_RE}$1" && ask "$2"; }
-git_ask 'reset[[:space:]]+[^;|&]*--(hard|merge)' \
-  'git reset --hard / --merge: 作業ツリーの未コミット変更を破棄して指定のコミットへ戻すコマンドです。成果物が失われないか確認してください'
-git_ask 'clean[[:space:]]+([^;|&]*[[:space:]])?(-[A-Za-z]*[fdxX][A-Za-z]*|--force)([[:space:]]|$)' \
-  'git clean: 追跡されていないファイル・ディレクトリを削除するコマンドです。未追跡の成果物が消えないか確認してください'
-# checkout / switch は「. を対象にした全変更破棄」（git checkout HEAD -- . を含む）と -f / --force / --discard-changes。
-# オプションは空白の直後だけを見る（feat/add-config のようなブランチ名の "-config" を -f と誤認しない）
-git_ask 'checkout[[:space:]]+([^;|&]*[[:space:]])?\.([[:space:];&|]|$)|checkout[[:space:]]+--[[:space:]]+\*|(checkout|switch)[[:space:]]+([^;|&]*[[:space:]])?(--force|--discard-changes|-[A-Za-z]*f[A-Za-z]*)([[:space:]]|$)' \
-  'git checkout / switch: 作業ツリーの変更を破棄して切り替えるコマンドです。未コミットの変更が失われないか確認してください'
-git_ask 'pull[[:space:]]+([^;|&]*[[:space:]])?(--rebase(=[^[:space:]]*)?|-[A-Za-z]*r[A-Za-z]*)([[:space:]]|$)' \
-  'git pull --rebase: リモートの変更を取り込みつつローカルのコミットを作り直すコマンドです。履歴が書き換わるため確認してください'
-git_ask 'branch[[:space:]]+[^;|&]*(-[A-Za-z]*D|--delete[[:space:]]+--force|--force[[:space:]]+--delete)' \
-  'git branch -D: マージされていないブランチを強制削除するコマンドです。そのブランチのコミットを失わないか確認してください'
-git_ask 'stash[[:space:]]+(drop|clear)' \
-  'git stash drop / clear: 退避した変更を削除するコマンドです。必要な stash が消えないか確認してください'
-git_ask 'rebase([[:space:];&|]|$)' \
-  'git rebase: コミットを作り直して履歴を書き換えるコマンドです。共有済みの履歴を変えないか確認してください'
-git_ask 'commit[[:space:]]+[^;|&]*--amend' \
-  'git commit --amend: 直前のコミットを書き換えるコマンドです。push 済みのコミットを変えないか確認してください'
-git_ask 'filter-branch|filter-repo' \
-  'git filter-branch / filter-repo: リポジトリ全体の履歴を書き換えるコマンドです。取り消せないため確認してください'
-git_ask 'reflog[[:space:]]+expire|update-ref[[:space:]]+-d' \
-  'git reflog expire / update-ref -d: 復旧用の参照を削除するコマンドです。誤操作の取り消しができなくなるため確認してください'
-git_ask 'worktree[[:space:]]+remove[[:space:]]+[^;|&]*(--force|-f)' \
-  'git worktree remove --force: 未コミットの変更ごと worktree を削除するコマンドです。成果物が失われないか確認してください'
-# restore で "." を対象にする形は、--staged だけ（index の操作で作業ツリーは変わらない）を除いて ask
-if printf '%s' "$sflat" | grep -Eq -- "${GIT_RE}restore[[:space:]]+([^;|&]*[[:space:]])?\.([[:space:];&|]|$)"; then
-  if printf '%s' "$sflat" | grep -Eq -- "${GIT_RE}restore[[:space:]]+[^;|&]*(--worktree|-[A-Za-z]*W[A-Za-z]*)([[:space:]]|$)" \
-     || ! printf '%s' "$sflat" | grep -Eq -- "${GIT_RE}restore[[:space:]]+[^;|&]*(--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]]|$)"; then
-    ask 'git restore .: 作業ツリーの全変更を最後のコミットの状態へ戻すコマンドです。未コミットの成果物が失われないか確認してください'
-  fi
-fi
+# ---- 4. 一括 kill と .git の削除は deny ----
+# 破壊的な git 操作（reset --hard / clean / checkout・switch の破棄 / rebase / branch -D /
+# stash drop / commit --amend / worktree remove --force 等）と絶対パスへの再帰 chmod / chown は
+# 確認なしで通す（ask を返さない）。作業ツリー・履歴を壊さないことは共通指示で守る。
 # コマンド置換を呼び出し元では 1 引数にし、その中のコマンドは別の行に戻す。
-# kill $(kill -9 -1) のように内部で実行される kill の確認は残す。
+# kill $(kill -9 -1) のように内部で実行される kill も deny する。
 kill_contexts() {
   printf '%s' "$raw1" | awk '
     function enter(kind) { outer[++depth] = out; quote[depth] = q; kinds[depth] = kind; out = ""; q = ""; paren[depth] = 0 }
@@ -845,15 +829,9 @@ $args
 EOF
   [ "$idx" -eq 1 ] && [ "$first_arg" = -1 ] && kill_all=1
 done < <(kill_contexts | grep -oE -- "${SEP}(sudo[[:space:]]+)?([^[:space:]]*/)?kill[[:space:]]+[^;&|]*" | sed -E 's/^[;&|(`\\]?[[:space:]]*//')
-[ "$kill_all" -eq 0 ] || ask 'killall / pkill / kill -1: 名前や全体指定でプロセスをまとめて終了するコマンドです。無関係なプロセスを止めないか確認してください'
-printf '%s' "$s1" | grep -Eq -- "${SEP}(sudo[[:space:]]+)?(chmod|chown|chgrp)[[:space:]]+[^;|&]*-[A-Za-z]*R[A-Za-z]*[[:space:]]+[^;|&]*[[:space:]]/" \
-  && ask 'chmod / chown -R: 絶対パス配下の権限・所有者を再帰的に変更するコマンドです。対象範囲が広すぎないか確認してください'
+[ "$kill_all" -eq 0 ] || deny 'killall / pkill / kill -1: 名前や全体指定でプロセスをまとめて終了するコマンドです。無関係なプロセスを止めるため拒否します。PID 指定の kill か kill $(lsof -ti :<ポート>) を使ってください'
 # リポジトリの .git（履歴）の削除は回復不能（rm -rf .git / ./.git / path/.git）
 printf '%s' "$raw1" | grep -Eq -- "${SEP}(sudo[[:space:]]+)?([^[:space:]]*/)?rm[[:space:]]+[^;&|]*[[:space:]/]\.git/?([[:space:]\"';&|]|$)" \
-  && ask 'rm …/.git: リポジトリの履歴（.git）を削除するコマンドです。ユーザーの明示的な指示があるか確認してください'
+  && deny 'リポジトリの履歴（.git）を削除するコマンドです。回復できないため拒否します。必要ならユーザーに実行を依頼してください'
 
-# deny の判定をすべて通過したので、保留していた ask を出す
-if [ -n "$pending_ask" ]; then
-  jq -cn --arg r "$pending_ask" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$r}}'
-fi
 exit 0

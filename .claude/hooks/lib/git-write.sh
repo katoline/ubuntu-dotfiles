@@ -332,6 +332,46 @@ _commit_unsafe_option() {
   return 1
 }
 
+# git commit の引数に --no-verify / -n（引用符で割ったものを含む）があるか。
+# -n は --no-verify の短縮形。-an / -nm "msg" のような連結も見るが、値を取る短い
+# オプション（m F C c t）が n より前に現れたら、その後ろは値なので見ない（-mn は -m の値 "n"）。
+_commit_has_noverify() {
+  local raw="$1" kq tok nq optval=0 rest i ch len
+  [ -f "$STRIP_AWK" ] || return 1
+  # join_quoted_lines で引用符の中の改行も \001 にする（複数行の -m 値が別トークンに割れない）
+  kq=$(printf '%s\n' "$raw" | awk -v keepq=1 -v join_quoted_lines=1 -f "$STRIP_AWK" 2>/dev/null | tr '\n' ' ') || return 1
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    if [ "$optval" -eq 1 ]; then optval=0; continue; fi
+    nq=${tok//[\"\']/}
+    nq=${nq//$'\001'/ }
+    case "$nq" in
+      --no-verify) return 0 ;;
+      --message | --file | --author | --date | --template | --fixup | --squash | --trailer | --cleanup | --reuse-message | --reedit-message) optval=1 ;;
+      -m | -F | -C | -c | -t) optval=1 ;;
+      -[!-]*)
+        rest=${nq#-}
+        len=${#rest}
+        i=0
+        while [ "$i" -lt "$len" ]; do
+          ch=${rest:i:1}
+          case "$ch" in
+            n) return 0 ;;
+            m | F | C | c | t)
+              # 値が連結されている（-mfoo）か、次のトークンが値（-m foo）
+              if [ $((i + 1)) -lt "$len" ]; then break; fi
+              optval=1
+              break
+              ;;
+          esac
+          i=$((i + 1))
+        done
+        ;;
+    esac
+  done < <(_commit_arg_tokens "$kq")
+  return 1
+}
+
 # git commit の可否: none（対象外）/ protected / ask / ok
 commit_verdict() {
   local raw="$1" cwd="${2:-$PWD}" s dir branch
@@ -580,6 +620,97 @@ push_destination_verdict() {
   elif [ "$_push_vars" -eq 1 ] || [ "$_push_quoted_opt" -eq 1 ]; then printf indeterminate
   else printf ok
   fi
+}
+
+# gh pr merge か（gh api のマージは含めない）。
+is_gh_pr_merge() {
+  local s
+  s=$(stripped_or_raw "$1")
+  s=${s//\\$'\n'/ }
+  s=${s//$'\n'/;}
+  printf '%s\n' "$s" | grep -Eq -- '(^|[[:space:];&|(`])([^[:space:]]*/)?\\?gh[[:space:]]+pr[[:space:]]+merge([[:space:];&|)<>]|$)'
+}
+
+# コマンド中の gh pr merge ごとに、gh pr view へ渡す対象（番号 / URL / ブランチ）と
+# -R / --repo だけを 1 行で出力する（引数は \037 区切り、merge ごとに改行）。
+# マージ専用のオプションとその値は落とす。複合コマンドのすべての merge を返す。
+_pr_merge_view_args() {
+  local raw="$1" q tok base stage=0 repo_next=0 skip_next=0
+  local -a toks out=()
+  flush_merge_group() {
+    local i
+    if [ "${#out[@]}" -gt 0 ]; then
+      printf '%s' "${out[0]}"
+      i=1
+      while [ "$i" -lt "${#out[@]}" ]; do
+        printf '\037%s' "${out[$i]}"
+        i=$((i + 1))
+      done
+    fi
+    printf '\n'
+    out=()
+  }
+  [ -f "$STRIP_AWK" ] || return 0
+  q=$(printf '%s\n' "$raw" | awk -v keepq=1 -v join_quoted_lines=1 -f "$STRIP_AWK" 2>/dev/null) || return 0
+  q=${q//$'\n'/;}
+  q=$(printf '%s' "$q" | sed -E 's/[;&|()]/ ; /g')
+  set -f
+  read -r -a toks <<<"$q"
+  for tok in "${toks[@]}"; do
+    tok=${tok//\"/}; tok=${tok//\'/}; tok=${tok//$'\001'/ }
+    [ -n "$tok" ] || continue
+    if [ "$tok" = ';' ]; then
+      [ "$stage" -eq 3 ] && flush_merge_group
+      stage=0
+      repo_next=0
+      skip_next=0
+      continue
+    fi
+    if [ "$stage" -eq 3 ]; then
+      if [ "$repo_next" -eq 1 ]; then out+=("$tok"); repo_next=0; continue; fi
+      if [ "$skip_next" -eq 1 ]; then skip_next=0; continue; fi
+      case "$tok" in
+        -R | --repo) out+=("$tok"); repo_next=1 ;;
+        --repo=*) out+=("$tok") ;;
+        -t | --subject | -b | --body | -F | --body-file | -A | --author-email | --match-head-commit) skip_next=1 ;;
+        -*) ;;
+        *) out+=("$tok") ;;
+      esac
+      continue
+    fi
+    base=${tok##*/}
+    base=${base#\\}
+    if [ "$stage" -eq 0 ]; then
+      [ "$base" = gh ] && stage=1
+      continue
+    fi
+    case "$stage:$tok" in
+      1:pr) stage=2 ;;
+      2:merge) stage=3 ;;
+      *) stage=0 ;;
+    esac
+  done
+  set +f
+  [ "$stage" -eq 3 ] && flush_merge_group
+}
+
+# gh pr merge の base がすべて既定ブランチ以外なら 1（確認なしで許可）。
+# 1 つでも既定ブランチ（main / master / 対象リポジトリの origin/HEAD）宛、または
+# base を取得できない・判定できない merge があれば 0（= 確認ダイアログを出す）。
+pr_merge_needs_confirm() {
+  local raw="$1" cwd="${2:-$PWD}" dir base line seen=0
+  local -a args=()
+  dir=$(resolve_repo_dir "$raw" "$cwd")
+  while IFS= read -r line; do
+    seen=1
+    args=()
+    [ -n "$line" ] && IFS=$'\037' read -r -a args <<<"$line"
+    base=$(cd "$dir" 2>/dev/null && timeout 10 gh pr view "${args[@]}" --json baseRefName -q .baseRefName 2>/dev/null | head -n1)
+    [ -n "$base" ] || return 0
+    is_protected_branch_name "$dir" "$base" && return 0
+  done < <(_pr_merge_view_args "$raw")
+  [ "$seen" -eq 1 ] || return 0
+  return 1
 }
 
 # PR のマージ（gh pr merge / gh api の /pulls/N/merge への PUT / GraphQL の
