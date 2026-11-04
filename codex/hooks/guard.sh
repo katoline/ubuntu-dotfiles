@@ -1,21 +1,33 @@
 #!/bin/bash
-# Codex の PR 操作ガード。PreToolUse は拒否だけを返し、承認は Codex の UI に任せる。
+# Codex の Git 操作ガード。PreToolUse は拒否だけを返し、承認は Codex の UI に任せる。
 # 通常の CLI 操作の事故防止が対象。難読化による回避は対象外。
-# フラグはセッションとターンで照合する。PreToolUse に agent_id が届かない環境では
-# サブエージェントを判別できないため、委譲禁止は ai/codex.md の指示でも守る。
+#
+# 既定ブランチ（main / master / origin/HEAD の指すブランチ）への commit / push は、
+# /pr の有無や承認モードに関係なく常に deny する。それ以外のブランチでの
+# commit / push / PR の作成と更新は何も返さない（Codex の承認ポリシーに任せる）。
+# PR のマージ・push の宛先を判定できない形・--amend / --no-verify / -n は、
+# Codex の PreToolUse が ask を返せないため deny する。
+# force push・リモートブランチ削除・--all / --mirror・sudo・サブエージェントからの
+# git 書き込みも deny する。
+#
+# /pr のフラグ（codex-pr-mode-*）は廃止した。判定は毎回コマンドとその対象リポジトリの
+# 状態から行い、共有関数（.claude/hooks/lib/git-write.sh）に委譲する。
+# PreToolUse に agent_id が届かない環境ではサブエージェントを判別できないため、
+# 委譲禁止は ai/codex.md の指示でも守る。
 exec 2>/dev/null
 command -v jq >/dev/null 2>&1 || exit 0
 input=$(cat)
 fields=$(printf '%s' "$input" | jq -r '
   (.tool_input | if type == "object" then . else {} end) as $ti
-  | [(.hook_event_name // ""), (.session_id // ""), (.turn_id // ""),
+  | [(.hook_event_name // ""), (.cwd // ""),
      ($ti.command // $ti.cmd // "" | if type == "array" then (if length >= 3 and (.[0] | test("(^|/)(bash|sh|zsh)$")) and (.[1] | test("^-[A-Za-z]*c[A-Za-z]*$")) then .[2] else join(" ") end) elif type == "string" then . else "" end),
-     (.prompt // .user_prompt // ""), (.agent_id // "")]
+     (.agent_id // "")]
   | map(tostring) | @sh') || exit 0
 eval "set -- $fields" || exit 0
-event="$1" session="$2" turn="$3" cmd="$4" prompt="$5" agent="$6"
-[[ "$session" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0
-FLAG="${TMPDIR:-/tmp}/codex-pr-mode-${session}"
+event="$1" cwd="$2" cmd="$3" agent="$4"
+[ "$event" = PreToolUse ] || exit 0
+[ -n "$cmd" ] || exit 0
+[ -n "$cwd" ] || cwd="$PWD"
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 ROOT="$(cd "$(dirname "$SELF")/../.." && pwd -P)" || exit 0
 STRIP_AWK="$ROOT/.claude/hooks/lib/strip-shell.awk"
@@ -25,53 +37,41 @@ deny() {
   jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 0
 }
-case "$event" in
-  UserPromptSubmit)
-    [ -z "$agent" ] || exit 0
-    # スキル指定は文中でも有効（Codex と同じく直前の文字は問わず、名前は $ の後の [A-Za-z0-9_:-] の並び）。
-    # スラッシュコマンドは先頭の語だけを起動とする。
-    if printf '%s\n' "$prompt" | LC_ALL=C grep -Eq '\$pr([^A-Za-z0-9_:-]|$)' \
-      || [[ "$prompt" =~ ^[[:space:]]*(/pr|/prompts:pr)([[:space:]]|$) ]]; then
-      printf '%s' "$turn" >"$FLAG"
-    else
-      case "$prompt" in
-        *'<!-- pr-mode-enable -->'*) printf '%s' "$turn" >"$FLAG" ;;
-        *) [ -n "$prompt" ] && rm -f "$FLAG" ;;
-      esac
-    fi
-    exit 0 ;;
-  Stop | SessionEnd)
-    [ -z "$agent" ] && rm -f "$FLAG"
-    exit 0 ;;
-  PreToolUse) ;;
-  *) exit 0 ;;
-esac
-[ -n "$cmd" ] || exit 0
+
 s=$(stripped_or_raw "$cmd")
 s=${s//\\$'\n'/ }
 s=${s//$'\n'/;}
-# 共通の判定で -C / -c 等を認識し、常時拒否の検査にも同じ通常形式を使う。
-gitopt='((-[cC]|--git-dir|--work-tree|--namespace)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[A-Za-z][^[:space:]]*[[:space:]]+)*'
-w=$(printf '%s\n' "$s" | sed -E "s@(^|[[:space:];&|(])([^[:space:]]*/)?\\\\?git[[:space:]]+${gitopt}(commit|push)([[:space:];&|)]|$)@\\1git \\5\\6@g")
-w=$(printf '%s' "$w" | tr ';|&()' ' ')
-w=" $w "
-printf '%s\n' "$s" | grep -Eq '(^|[[:space:];&|(])sudo([[:space:];&|)]|$)' && deny 'sudo は使えません。必要なコマンドをユーザーに示してください。'
-case "$w" in *"gh pr merge"*) deny 'PR のマージはユーザーに任せてください。' ;; esac
-if is_force_push "$cmd"; then deny 'force push は禁止です（/pr 中でも拒否します）。'; fi
-case "$w" in
-  *"git push"*)
-    case "$w" in
-      *" --mirror "* | *" --delete "* | *" -d "*) deny 'リモートブランチの削除・--mirror は禁止です。' ;;
-      *" --no-verify "*) deny '--no-verify は使いません。' ;;
-      *" origin main "* | *" origin master "* | *":main "* | *":master "* | *":refs/heads/main "* | *":refs/heads/master "*) deny 'デフォルトブランチへの push は禁止です。PR 用ブランチを使ってください。' ;;
-    esac ;;
-  *"git commit"*)
-    case "$w" in *" --amend "* | *" --no-verify "* | *" -n "*) deny '--amend / --no-verify は使いません。' ;; esac ;;
-esac
+
+# サブエージェントからの git 書き込みは常に拒否する
 if [ -n "$agent" ] && is_git_write "$cmd" "$s"; then
-  deny 'コミット・push・PR の作成と更新はメインセッションが直接実行してください。'
+  deny 'コミット・push・PR の作成と更新はメインセッションが直接実行してください（サブエージェントからは実行できません）。'
 fi
-if [ ! -f "$FLAG" ] || [ "$(cat "$FLAG")" != "$turn" ]; then
-  is_git_write "$cmd" "$s" && deny '/pr を起動していないターンでは、コミット・push・PR の作成と更新はできません。変更をワーキングツリーに残し、ユーザーに /pr の実行を案内してください。'
+
+printf '%s\n' "$s" | grep -Eq '(^|[[:space:];&|(])sudo([[:space:];&|)]|$)' && deny 'sudo は使えません。必要なコマンドをユーザーに示してください。'
+
+# PR のマージは Codex が ask を返せないため拒否する
+if is_pr_merge "$cmd"; then
+  deny 'PR のマージは、ユーザーが明示的に指示したときに、ユーザー自身が実行するか Claude Code 等の確認付きの環境で行ってください（Codex は確認ダイアログを出せないため拒否します）。'
 fi
+
+# force push は常に拒否
+if is_force_push "$cmd"; then
+  deny 'force push は禁止です。'
+fi
+
+# 既定ブランチへの commit は常に拒否。--amend / --no-verify / -n も拒否
+case "$(commit_verdict "$cmd" "$cwd")" in
+  protected) deny '既定ブランチ（main / master / origin/HEAD が指すブランチ）への commit は禁止されています。作業ブランチを作成してください。' ;;
+  ask) deny '--amend / --no-verify / -n を含むコミットは拒否します。内容を確認し、必要な場合はユーザーが手動で実行してください。' ;;
+esac
+
+# push は宛先で判定する。宛先を判定できない形も拒否（Codex は ask を返せない）
+case "$(push_destination_verdict "$cmd" "$cwd")" in
+  all | delete) deny '--all / --mirror での push とリモートブランチの削除は禁止です。' ;;
+  force) deny 'force push は禁止です。' ;;
+  no-verify) deny '--no-verify は使いません。' ;;
+  protected) deny '既定ブランチ（main / master / origin/HEAD が指すブランチ）への push は禁止されています。PR 用ブランチを使ってください。' ;;
+  indeterminate) deny 'push の宛先を判定できません（変数・ワイルドカード等）。宛先を確認し、ユーザーに手動実行を依頼してください。' ;;
+esac
+
 exit 0

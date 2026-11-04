@@ -11,16 +11,16 @@
 | `settings.json` | Claude Code の設定（フック・言語・effortLevel・permissions など） |
 | （グローバル指示） | 実体はリポジトリの [`ai/`](../ai/README.md)。`ai/install.sh` が `~/.claude/CLAUDE.md` → `ai/core.md`（全CLI共通）、`~/.claude/rules/claude.md` → `ai/claude.md`（Claude Code 固有のモデル運用とフックの挙動）のリンクを張る。`.claude/setup.sh` の配布対象ではない |
 | `hooks/notify.sh` | Stop / Notification 時に iPhone へプッシュ通知するフック（送信本体は `claude-notify/send-push.mjs`）。Claude / Grok |
-| `hooks/pr-mode.sh` | `/pr` 実行中だけ git commit / push / PR作成を自動許可し、それ以外は実行前に拒否するフック（Claude / Grok） |
+| `hooks/pr-mode.sh` | 既定ブランチへの git commit / push を拒否し、それ以外の commit / push / PR 作成・更新を自動承認し、PR のマージを確認にするフック（Claude / Grok） |
 | `hooks/guard-destructive.sh` | 回復不能な操作（ルート・ホーム直下の削除、破壊的git操作等）を機構的に止めるフック |
 | `hooks/verify-gate.sh` | dotfiles の検証対象ファイルを編集したセッションで、対応する検証コマンド（`bash .claude/tests/run.sh` / `nix eval`）が成功するまでターンを終えさせないフック |
 | `hooks/validate-claude-config.sh` | `~/.claude` 配下の設定ファイル編集直後にJSON構文・シェル構文・frontmatterを検証するフック |
 | `hooks/lib/strip-shell.awk` | シェルコマンド文字列から引用符の中身とHEREDOC本文を除去する共通ライブラリ（pr-mode.sh・guard-destructive.shが利用） |
-| `hooks/lib/scan-secrets.sh` | コミットされる差分の追加行を既知のトークン形式で検査する（pr-mode.sh が `/pr` 中のコミットを自動承認する直前に呼ぶ） |
+| `hooks/lib/scan-secrets.sh` | コミットされる差分の追加行を既知のトークン形式で検査する（pr-mode.sh が commit を自動承認する直前に呼ぶ） |
 | `agents/Explore.md` | 組み込みの Explore を上書きする読み取り専用の探索エージェント定義（`model: haiku` 固定・`omitClaudeMd` でグローバル指示を読ませない） |
 | `dev-roots` | Claude Code が確認なしで削除・移動できる作業ルートの**唯一の定義**（1行1パス、`~/` 始まり、`#` から行末はコメント、前後の空白と末尾の `/` は無視、`~/` 始まり以外の行は読まれない）。`hooks/guard-destructive.sh`・`nix/home.nix`（`devDirs`）・`tests/test-guard-destructive.sh` が同じ読み方で読む。変更したら `git add` すること（flakeはgit追跡ファイルしか読まない） |
 | `skills/readme/SKILL.md` | `/readme` スキル：READMEを最新状態に更新（なければ新規作成） |
-| `skills/pr/SKILL.md` | `/pr` スキル：変更をコミット・pushしてGitHubにPRを作成。`disable-model-invocation: true` でユーザー起動限定 |
+| `skills/pr/SKILL.md` | `pr` スキル：作業完了時または `/pr` 起動時に、変更をコミット・pushしてGitHubにPRを作成（マージはしない） |
 | `skills/clean-branches/SKILL.md` | `/clean-branches` スキル：ローカルブランチのうちデフォルトブランチ・使用中のブランチ以外を削除して整理（未マージは確認後のみ） |
 | `skills/nix-setup/SKILL.md` | `/nix-setup` スキル：新規プロジェクトの開発環境をNix devShell + direnvでセットアップ |
 | `skills/git-pull/SKILL.md` | `/git-pull` スキル：直下の各リポジトリを `main` に切り替えてfast-forward-onlyでpull（変更があるリポジトリはスキップ） |
@@ -59,7 +59,7 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 
 - `permissions.deny`：`~/.claude/claude-notify.json`・`~/.claude/history.jsonl` に加え、SSH秘密鍵・AWS認証情報・`gh` の hosts.yml・Docker設定・`.netrc`・GPG鍵・kubeconfig・`.npmrc`・主要な `.env` 変種（`.env.example` は除く。一覧は settings.json）などの秘密ファイルの読み取りと `sudo` の実行を禁止（詳細は settings.json）
 - `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` に加え、`apt` / `snap`・`npm install -g` 系・`pip install --user`・`pipx`・`uv tool install`・`cargo` / `gem` / `go install`・`nix profile` / `nix-env`・`home-manager` など、プロジェクト外へ恒久的な変更を及ぼすコマンドを実行前に必ず確認（詳細は settings.json）。Grok の always-approve でもシェルの ask ルールは効く
-- `hooks`：`UserPromptExpansion` / `UserPromptSubmit` / `PreToolUse`(Bash) / `PermissionRequest`(Bash) / `Stop` で `hooks/pr-mode.sh`、`PreToolUse`(Bash) で `hooks/guard-destructive.sh`、`PostToolUse`(Edit|Write|NotebookEdit|write|search_replace) で `hooks/validate-claude-config.sh` と `hooks/verify-gate.sh`、`PostToolUse`(Bash) / `Stop` で `hooks/verify-gate.sh`、`Stop` / `Notification`(matcher: `permission_prompt`) で `hooks/notify.sh`。Grok の matcher `Bash` は `run_terminal_command` にも当たる
+- `hooks`：`PreToolUse`(Bash) で `hooks/pr-mode.sh` と `hooks/guard-destructive.sh`、`PermissionRequest`(Bash) で `hooks/pr-mode.sh`、`PostToolUse`(Edit|Write|NotebookEdit|write|search_replace) で `hooks/validate-claude-config.sh` と `hooks/verify-gate.sh`、`PostToolUse`(Bash) / `Stop` で `hooks/verify-gate.sh`、`Stop` / `Notification`(matcher: `permission_prompt`) で `hooks/notify.sh`。Grok の matcher `Bash` は `run_terminal_command` にも当たる
   - `PreToolUse` の `hooks/pr-mode.sh`・`hooks/guard-destructive.sh` は、高負荷時の打ち切りを減らすため timeout を30秒とし、`onFailure: "block"` を付けている。**外さないこと**（外すと安全装置が壊れたとき＝起動不能・タイムアウト・想定外の exit コードのときに黙って素通りになる）。代償として、フックのファイルが消える・壊れると全 Bash が止まる
   - Orca（エージェント管理アプリ）が書き込んだフックと `statusLine`（コマンドに `orca` を含むもの）は外部ツール由来なので手で編集しない。`tests/run.sh` が「登録元が `bash $HOME/.claude/hooks/<実在するスクリプト>` か許可リストの外部ツールか」を検査し、知らない登録元が増えたら落ちる
 - `env.CLAUDE_CODE_SUBAGENT_MODEL`：`opus`（サブエージェントの既定モデル。振り分けは `ai/claude.md`）
@@ -72,38 +72,52 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 - `tui`：`fullscreen`
 - `agentPushNotifEnabled`：`false`（Remote Control接続時にClaudeの判断でスマホへプッシュ通知する公式機能。バックグラウンドのエージェント実行でも通知が飛ぶため無効。claude-notifyとは別系統で、こちらの通知は維持する）
 
-## Git操作の制限（/pr フロー）
+## Git操作の制限（既定ブランチ保護）
 
-ユーザーが `/pr` と打つまで、Claude / Grok はコミット・push・PR作成を行わない。自然言語の「PRを出して」では起動しない。`/pr` 実行中は確認なしで一気にPR作成まで進む。
+方針は「既定ブランチ（`main` / `master` / `origin/HEAD` の指すブランチ）への commit・push は常に拒否し、それ以外の作業ブランチでの commit・push・PR の作成と更新は自動承認する。PR のマージは常に確認」。`/pr` は同じ手順を明示的に起動する入口で、許可判定は `/pr` を起動したかどうかに依存しない。判定の実体は `hooks/lib/git-write.sh` の1か所で、Claude / Grok / OpenCode の adapter / Codex が共有する。
 
-- `skills/pr/SKILL.md` の `disable-model-invocation: true`：`/pr` はユーザー起動限定で、Claude がスキルを自動起動すること自体を機構的に禁止
-- `ai/core.md`（`~/.claude/CLAUDE.md`）：`/pr` の指示があるまで `git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` を実行しないよう指示（Claude が試みること自体を抑止）
-- `settings.json` の `permissions.ask`：万一実行しようとしても必ず確認ダイアログが出る強制レイヤー
-- `hooks/pr-mode.sh`：`/pr` を送信したターンの間だけフラグを立て、対象コマンドを自動許可する。判定は `PreToolUse`(Bash) の deny と `PermissionRequest`(Bash) の allow の二段構え
-  - `UserPromptExpansion`：スラッシュコマンド展開時、コマンド名が `pr` ならフラグ作成、別コマンドなら削除
-  - `UserPromptSubmit`：Claude はプロンプトが `/pr`（またはその展開本文）でなければフラグを削除。Grok は Expansion が無いので、先頭 `/pr`・番兵 `<!-- pr-mode-enable -->`・SKILL.md の H1 でフラグ作成、それ以外の非空 prompt で削除（空の auto-wake では触らない）。展開本文かどうかは `skills/pr/SKILL.md` の最初の `# ` 見出しを実行時に読んで判定する（見出しを変えても追従する。**読めなければ展開本文とは判定せずフラグを消す**＝fail-closed。SKILL.md から H1 を無くすと判定できなくなるので、H1 の直前に注意書きの HTML コメントを置いてある。テスト D00 が H1 の存在を、D04c が SKILL.md の無いコピーでフラグが消えることを検査する）
-  - `PreToolUse`(Bash)：フラグが無ければ、コミット・push・PR作成を含むコマンドを `permissionDecision: deny` で拒否する最終防衛層。force push とフラグ改ざんは `/pr` 中でも deny。Grok は PermissionRequest が無いので、`/pr` 中でも自動許可対象外の git 書き込みは ask（always-approve でも確認になる）。stdin は snake_case / camelCase 両対応、ツール名は `Bash` と `run_terminal_command` を見る
-  - `PermissionRequest`(Bash)：Claude のみ。フラグがあれば対象コマンドを `behavior: allow` で自動承認する（PreToolUse の allow では `permissions.ask` を上書きできないため、ask ダイアログの代替はここで行う）。フラグが無い場合も deny を返すが、これは PreToolUse が無効な環境向けの二重化
-  - `Stop`：ターン終了時にフラグ削除
+各層の役割：
 
-自動承認の対象は「`git commit` / `git push` / `gh pr create`（別名 `gh pr new`）/ `gh pr edit` で始まる単一コマンド」に限る：
+- `ai/core.md`（`~/.claude/CLAUDE.md`）：検証が通ったら作業ブランチで commit・push・PR 作成まで進めること、既定ブランチへは commit・push しないこと、PR のマージはユーザーの明示的な指示があるときだけ行い自分から提案しないことを指示する（Claude が試みること自体を抑止）
+- `skills/pr/SKILL.md`：手順（検証→現状把握→ブランチ準備→コミット分割→push と PR 作成→報告）と、自動承認を受けるための単一コマンドの条件
+- `settings.json` の `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` は既定で確認ダイアログ。`hooks/pr-mode.sh` の `PermissionRequest` が自動承認条件を満たすものだけを allow に変える
+- `hooks/pr-mode.sh`：状態を持たず、コマンドと対象リポジトリの状態から毎回判定する（`PreToolUse`(Bash) の deny / ask と `PermissionRequest`(Bash) の allow）
 
-- 複合コマンド・改行区切り・コマンド置換（`$( )` / `` ` ``）・リダイレクト（`2>&1` は許容）を含む場合は自動承認せず確認ダイアログに落とす。引用符の中身と HEREDOC 本文は `hooks/lib/strip-shell.awk`（引用符の種別を追跡する状態機械）で除去してから判定するため、PR本文中の演算子リテラルなどを誤検知しない（ただし二重引用符の中のバッククォート置換と、引用符無しタグの HEREDOC 本文にある `$( )` / バッククォートは bash が実際に実行するので判定対象に残す）
-- `git push` は force系（`--force*` / `-f` を含む短縮オプション群 / `+refspec`）・削除系（`--delete` / `-d` / `:branch`）・`--mirror`・`--no-verify`・`--prune`・`--all`・`--tags`・`main` / `master` 宛の push（`HEAD:main` / `feat:refs/heads/main` の refspec 形も含む）、および現在ブランチが `main` / `master` の場合の push を自動承認しない
-- `git commit` は `--no-verify` / `-n` を含む短縮オプション群 / `--amend` を自動承認しない
-- `gh pr create` / `gh pr new` / `gh pr edit` は別リポジトリ宛（`-R` / `--repo`）を自動承認しない
-- `git commit` は、コミットされる差分（`-a` 付きなら `git diff HEAD`、無ければステージ済み）に既知のトークン形式（`hooks/lib/scan-secrets.sh` が GitHub / Anthropic / OpenAI / xAI / AWS / Slack / Google / Stripe / npm のキーと秘密鍵ブロックを検査）があれば自動承認せず、ファイル名と形式名を理由にして ask にする
-- サブエージェントからの git 書き込み（フック入力に `agent_id` がある）は `/pr` 中でも deny（フラグはセッション単位なので、同じ `session_id` で届くサブエージェントの実行まで自動承認しないため）
-- 引用符を含むトークンは、引用符を取り除いた形が `-` で始まるオプション（`"--force"` / `--for"ce"` / `-"f"` / `--am"end"`）か `main` / `master` 宛（`ma"in"` / `"HEAD:main"`。この検査は `git push` / `git commit` だけで、`gh pr create --base "main"` のマージ先指定は落とさない）なら自動承認しない。`git push` の引数の変数（`$BRANCH`）も同様（引用符の中身は除去して判定するため、引用符を残した版をトークン単位で別途見る）
-- `gh pr merge` は対象外で常に確認ダイアログ
+判定：
 
-/pr 外での拒否判定は `git commit` / `git push` / `gh pr create`（`/usr/bin/git` / `\git` / `command \git` / `env X=1 git` のようなエイリアス回避・絶対パスの形も含む）に加え、`gh api` の `/pulls` への書き込み（`-X POST` や `-f` / `--input` による暗黙の POST）と GraphQL の `createPullRequest`（`gh api` / `graphql` の文脈にあるものだけ。`grep createPullRequest` のような単なる文字列一致では拒否しない）を対象にする。`gh api` は引用の外の区切り（`;` `&` `|` 改行）で分けた区間ごとに見て（括弧・バッククォートは語を分けるだけ）、前置き語（`timeout` / `nix develop -c` / `env -u …` 等）は問わない（`echo gh api … -f x` のような文字列も書き込み扱いになるのは許容する）。`gh api` の GET（PR 一覧・`/pulls/N/comments` の取得など）は拒否しない。`bash -c "…"` / `eval` / `bash <<EOF` / `… | sh` のようにシェルへ文字列を渡す形は生文字列で見る（ただし `bash -c` / `eval` のときは HEREDOC 本文を除いた生文字列で見る。`cat > x.sh <<'EOF' … EOF` のようにスクリプトを書き出すだけのコマンドは、本文に `eval` や `git commit` の語があっても bash は実行しないため拒否しない。シェルに流す HEREDOC・パイプは本文そのものが実行されるので従来どおり本文を見る）。引用符の除去に失敗したとき（awk が読めない等）は生文字列で判定し、fail-open にしない。
+- 保護ブランチ：`main`・`master`、および対象リポジトリの `git symbolic-ref --short refs/remotes/origin/HEAD` の `origin/` 以降（取得できなければ `main` / `master` のみ）
+- 対象リポジトリ：コマンドに `git -C <dir>` があればその dir、コマンド先頭が `cd <dir> &&`（または `;`。先頭の `(` は読み飛ばすので `(cd <dir> && …)` も解決する）ならその dir（フック入力の cwd からの相対も解決）、それ以外はフック入力の cwd。変数・コマンド置換で解決できないときは cwd
+- `PreToolUse`(Bash)：
+  - サブエージェントからの git 書き込み、force push、`--all` / `--mirror`、リモートブランチ削除、`--no-verify` の push、保護ブランチへの commit / push を deny する。push の宛先は refspec（`main` / `HEAD:main` / `feat:main` / `refs/heads/main` / `+main` 等）と、refspec 無し・`HEAD` 単独のときの現在ブランチで判定する
+  - PR のマージ（`gh pr merge` / `gh api` の `/pulls/N/merge` への PUT / GraphQL の `mergePullRequest`）は ask
+  - `git commit --amend` / `--no-verify` / `-n` と、変数などで push 先を判定できない形は ask
+  - Grok は `PermissionRequest` を持たないため、自動承認条件を満たさない git 書き込みも `PreToolUse` で ask にする（always-approve でも確認になる）。stdin は snake_case / camelCase 両対応、ツール名は `Bash` と `run_terminal_command` を見る
+- `PermissionRequest`(Bash)（Claude）：`PreToolUse` が決定を返さなかった対象コマンドを、次をすべて満たすときだけ `behavior: allow` で自動承認する（`PreToolUse` の allow では `permissions.ask` を上書きできないため、ask ダイアログの代替はここで行う）
+  - `git commit` / `git push` / `gh pr create`（別名 `gh pr new`）/ `gh pr edit` / `gh api` の `/pulls` 書き込み（マージ以外）で、保護ブランチ以外かつ単一コマンド
+  - 複合コマンド・改行区切り・コマンド置換（`$( )` / `` ` ``）・リダイレクト（`2>&1` は許容）を含まない。引用符の中身と HEREDOC 本文は `hooks/lib/strip-shell.awk`（引用符の種別を追跡する状態機械）で除去してから判定するため、PR本文中の演算子リテラルなどを誤検知しない（ただし二重引用符の中のバッククォート置換と、引用符無しタグの HEREDOC 本文にある `$( )` / バッククォートは bash が実際に実行するので判定対象に残す）。`"$(cat <<'EOF' … EOF\n)"` の定型 HEREDOC 本文は許す
+  - `git push` は、宛先が保護ブランチでない・force系（`--force*` / `-f` を含む短縮オプション群 / `+refspec`）でない・削除系（`--delete` / `--prune` / `-d` / `:branch`）でない・`--mirror` / `--all` でない・`--no-verify` でない・変数などで宛先を判定できない形でない。長いオプション（`--follow-tags` / `--signed` / `--dry-run` 等）は名前で判定し、未知の `--*` は force / delete の文字判定に掛けない（文字判定は `-f` / `-d` などの短いフラグ群だけ）
+  - `git commit` は `--no-verify` / `-n` を含む短縮オプション群 / `--amend` を含まない（判定は `git commit` の引数区間だけで行い、`-m` / `--message` / `-F` / `--file` / `-C` / `-c` 等の値はオプションとして見ない）
+  - `gh pr create` / `gh pr new` / `gh pr edit` は別リポジトリ宛（`-R` / `--repo`）でない
+  - `git commit` は、コミットされる差分（`-a` 付きなら `git diff HEAD`、無ければステージ済み）に既知のトークン形式（`hooks/lib/scan-secrets.sh` が GitHub / Anthropic / OpenAI / xAI / AWS / Slack / Google / Stripe / npm のキーと秘密鍵ブロックを検査）が無い。一致があれば自動承認せず、ファイル名と形式名を理由にして ask にする
+  - 引用符を含むトークンは、`git push` と `git commit` の引数区間で判定する。引用符を取り除いた形が `-` で始まるオプション（`"--force"` / `--for"ce"` / `-"f"` / `--am"end"`）か `main` / `master` 宛（`ma"in"` / `"HEAD:main"`）なら自動承認しない。`git commit -m "- add"` のようなオプションの値や、push 区間の外の `gh pr create --base "main"` のマージ先指定は落とさない。`gh pr create` / `new` / `edit` は引用符で割った `-R` / `--repo` も自動承認しない。`git push` の引数の変数（`$BRANCH`）も同様
+  - 条件を満たさないときは何も返さず、通常の確認ダイアログに落とす（拒否はしない）。PR のマージも allow しない
+- 二重化：`PreToolUse` が無効な環境向けに、`PermissionRequest` 側でも保護ブランチ宛・force・削除系の deny を判定する
 
-フラグは `session_id` 単位のため、git操作はメインセッションが直接実行する（サブエージェントに委譲すると別セッション扱いで拒否される）。`session_id` が取れない `PreToolUse` / `PermissionRequest` はフラグの所在が分からず `/pr` 中と確認できないため、フラグ無し（拒否側）として扱う（fail-open にしない）。Stop でフラグが消えるため、`/pr` の途中でターンを終えて質問すると次ターンは拒否される。そのため `/pr` スキルは途中の確認に AskUserQuestion ツールを使う（`SKILL.md` に明記）。
+Git 書き込みの検出は `git commit` / `git push` / `gh pr create`（`/usr/bin/git` / `\git` / `command \git` / `env X=1 git` のようなエイリアス回避・絶対パスの形も含む）に加え、`gh api` の `/pulls` への書き込み（`-X POST` や `-f` / `--input` による暗黙の POST）と GraphQL の `createPullRequest`（`gh api` / `graphql` の文脈にあるものだけ。`grep createPullRequest` のような単なる文字列一致では反応しない）を対象にする。`gh api` は引用の外の区切り（`;` `&` `|` 改行）で分けた区間ごとに見て（括弧・バッククォートは語を分けるだけ）、前置き語（`timeout` / `nix develop -c` / `env -u …` 等）は問わない（`echo gh api … -f x` のような文字列も書き込み扱いになるのは許容する）。`gh api` の GET（PR 一覧・`/pulls/N/comments` の取得など）は対象外。`bash -c "…"` / `eval` / `bash <<EOF` / `… | sh` のようにシェルへ文字列を渡す形は生文字列で見る（ただし `bash -c` / `eval` のときは HEREDOC 本文を除いた生文字列で見る。`cat > x.sh <<'EOF' … EOF` のようにスクリプトを書き出すだけのコマンドは、本文に `eval` や `git commit` の語があっても bash は実行しないため対象外。シェルに流す HEREDOC・パイプは本文そのものが実行されるので従来どおり本文を見る）。引用符の除去に失敗したとき（awk が読めない等）は生文字列で判定し、fail-open にしない。
+
+git 操作はメインセッションが直接実行する（サブエージェントからの実行はフック入力の `agent_id` で判別して deny する）。判定は状態を持たないため、`session_id` が取れなくてもコマンドと cwd だけで判定する。
+
+CLI ごとの違い：
+
+- Claude Code：`PreToolUse`（deny / ask）と `PermissionRequest`（allow）の二段構え。自動承認条件を満たす単一コマンドは確認なしで通る
+- Grok：`PermissionRequest` が無く `permission_mode = "always-approve"` なので、`PreToolUse` が自動承認条件を満たさない git 書き込みだけ ask にする。force push・保護ブランチ宛・削除系は deny
+- OpenCode：`opencode/plugins/shared-harness.js` が `opencode/hooks/harness.sh` 経由で同じ `pr-mode.sh` を呼び、`PreToolUse` の deny / ask と `PermissionRequest` の allow を permission 評価に反映する。plugin を読み込めない場合は `opencode.json` の ask が残る。`delegated-worker` と通常 subagent は permission で git 書き込みを拒否する
+- Codex：`codex/hooks/guard.sh` が同じ `git-write.sh` を使う拒否専用フック。`PreToolUse` が ask を返せないため、PR のマージ・宛先を判定できない push・`--amend` / `--no-verify` / `-n` も deny する。既定ブランチ以外の commit・push・PR 作成/更新は Codex の承認ポリシーに任せる
+- Devin：フックが無い。`devin/config.json` の `ask`（commit / push / `gh pr merge`）と `deny`（force push / `sudo`）、共通指示の「既定ブランチでは作業しない」で守る
 
 ## 破壊的コマンドのガード
 
-`hooks/guard-destructive.sh`（`PreToolUse`/Bash）は、/pr フローとは独立に「正当な用途がほぼ無い、または取り返しがつかない操作」を機構的に止める。**契約は一文**（フック冒頭のコメントと同じ）：
+`hooks/guard-destructive.sh`（`PreToolUse`/Bash）は、Git 操作の制限とは独立に「正当な用途がほぼ無い、または取り返しがつかない操作」を機構的に止める。**契約は一文**（フック冒頭のコメントと同じ）：
 
 > 解釈できる削除（対象のコマンド置換・HEREDOC・eval を含まず、対象がすべて許可ルートか一時領域に解決できるもの）は確認なし。致命的な対象と、解釈できたうえで許可ルート外の削除は deny。それ以外で削除語を含むものは、何をするコマンドかを説明して ask。
 
@@ -128,11 +142,12 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 正規表現ベースの多層防御の一層であり、次は捕捉しない。`CLAUDE.md` の指示・`permissions.ask`・auto mode の分類器と併用して抑止する：
 
 - **`bash script.sh` のようなスクリプトファイル経由の間接実行**（両フック共通）。フックが見るのは Bash ツールに渡されたコマンド文字列だけで、スクリプトの中身は読まない。そのため拒否メッセージでも「スクリプトに書いて実行する」回避策は案内しない
-- **git alias 経由**（`git -c alias.x=commit x`）。`pr-mode.sh` の拒否判定を素通りする
+- **git alias 経由**（`git -c alias.x=commit x`）。`pr-mode.sh` の保護ブランチ判定にも自動承認にも掛からない
+- **`pushd` / `GIT_DIR=…` / `--git-dir=…` で対象ディレクトリを切り替える形**。対象リポジトリの解決は `git -C` とコマンド先頭の `cd` だけを見る（先頭の `(` は読み飛ばす）
 - `trash` / `rsync --delete` / `> file` での空化 など、`rm` 以外の削除手段（`guard-destructive.sh`）
 - シンボリックリンク経由のパス（リンクを解決しない）。`find` は起点ディレクトリだけを検査する
 
-なお `/pr` 外での `git commit` / `push` / `gh pr create` は、`eval` / `sh -c` 経由でも **deny のまま**（guard の「解釈不能は ask」の例外）。`pr-mode.sh` の意図は「Claude が試みること自体を抑止する」ことであり、ask にすると人の承認で通ってしまうため。
+なお `eval` / `sh -c` / `bash -c` のようにシェルへ文字列を渡す形は、保護ブランチの判定に掛からない（git alias と同じ既知の抜け道）。`pr-mode.sh` は状態を持たず、解釈できない形を deny に倒すのではなく自動承認しないだけなので、CLI 側の通常の permission 判定（Claude は確認ダイアログ、Codex は承認ポリシー）に委ねる。共通指示の「既定ブランチでは commit・push しない」で抑止する。
 
 ## 設定ファイルの自動検証
 

@@ -70,25 +70,7 @@
   },
   "model": "opus[1m]",
   "hooks": {
-    "UserPromptExpansion": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude/hooks/pr-mode.sh"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude/hooks/pr-mode.sh"
-          }
-        ]
-      },
       {
         "hooks": [
           {
@@ -187,10 +169,6 @@
       {
         "matcher": "",
         "hooks": [
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude/hooks/pr-mode.sh"
-          },
           {
             "type": "command",
             "command": "bash $HOME/.claude/hooks/notify.sh"

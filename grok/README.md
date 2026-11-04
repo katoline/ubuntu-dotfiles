@@ -23,15 +23,15 @@ Grok CLI（xAI）の設定実体。適用は [nix/home.nix](../nix/home.nix) が
 - `sessions/` / `logs/` / `marketplace-cache/` / `worktrees.db` などランタイム生成物
 - `trusted_folders.toml`（このマシンで信頼したディレクトリ）
 
-## 権限モードと `/pr` フロー
+## 権限モードと Git操作の制限（既定ブランチ保護）
 
 `config.toml` の `permission_mode = "always-approve"` は通常の確認ダイアログを出さない設定。その代わり:
 
-- `pr-mode.sh` の `PreToolUse` が、`/pr` 中以外の `git commit` / `git push` / `gh pr create` を deny する。force push は `/pr` 中でも deny。自動許可対象外の git 書き込みは ask（always-approve でも確認になる）
+- `pr-mode.sh` の `PreToolUse` が、既定ブランチ（main / master / origin/HEAD）への `git commit` / `git push`、force push、リモートブランチの削除を deny する。既定ブランチ以外の commit / push / PR 作成・更新は `/pr` の起動有無にかかわらず通し、自動承認条件を満たさない git 書き込み（`--amend` / `--no-verify` / 宛先を判定できない push など）だけ ask（always-approve でも確認になる）
 - `guard-destructive.sh` が致命的な削除を deny し、解釈できない削除は ask
 - `settings.json` のシェル `ask` / `deny` ルールは always-approve でも効く（`gh pr merge`・`sudo`・グローバル install など）
 
-`/pr` の検出は `UserPromptSubmit`（先頭 `/pr`、番兵 `<!-- pr-mode-enable -->`、または `skills/pr/SKILL.md` の H1）。stdin は camelCase、イベント名は `GROK_HOOK_EVENT`、ツール名は `run_terminal_command`（matcher `Bash` のエイリアスでも当たる）。
+Git の判定は `/pr` の起動状態に依存せず、コマンドと対象リポジトリの状態から毎回行う。stdin は camelCase、イベント名は `GROK_HOOK_EVENT`、ツール名は `run_terminal_command`（matcher `Bash` のエイリアスでも当たる）。
 
 ## VSCode 統合ターミナルの日本語IME
 

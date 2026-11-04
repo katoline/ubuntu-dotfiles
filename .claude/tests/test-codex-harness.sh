@@ -101,4 +101,7 @@ out=$(stop); report C06-edit-alias block "$(jget "$out" '.decision // "none"')" 
 verified '{"output":"すべて通過\n","exit_code":0}'
 report C07-state-separated no "$(if [ -e "$T/claude-verify-gate-$S" ]; then echo yes; else echo no; fi)" ''
 report C08-registration 'Bash|apply_patch|Edit|Write|NotebookEdit' "$(jq -r '.hooks.PostToolUse[] | select(any(.hooks[]; .command | contains("harness.sh"))) | .matcher' "$ROOT/codex/hooks.json")" ''
+report C09-pre-registration Bash "$(jq -r '.hooks.PreToolUse[] | select(any(.hooks[]; .command | contains("harness.sh"))) | .matcher' "$ROOT/codex/hooks.json")" ''
+report C10-stop-registration 1 "$(jq -r '[.hooks.Stop[]?.hooks[].command | select(contains("harness.sh"))] | length' "$ROOT/codex/hooks.json")" ''
+report C11-no-flag-events 0 "$(jq -r '[.hooks.UserPromptSubmit[]?.hooks[].command, .hooks.SessionEnd[]?.hooks[].command] | map(select(contains("harness.sh") or contains("guard.sh"))) | length' "$ROOT/codex/hooks.json")" ''
 summary 'codex-harness.sh'

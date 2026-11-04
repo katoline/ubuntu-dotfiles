@@ -52,8 +52,8 @@ dotfiles/
 ├── codex/
 │   ├── config.toml        # Codex CLIの設定（承認ポリシー・サンドボックス）
 │   ├── README.md          # 設定反映・フック信頼・CLIとdesktop・Ubuntuのサンドボックス対策
-│   ├── hooks.json         # Codexのフック登録（PR制限・削除ガード・変更後の検証ゲート）
-│   ├── hooks/guard.sh     # /pr 外のコミット・push・PR操作と危険な操作を拒否（拒否専用）
+│   ├── hooks.json         # Codexのフック登録（削除ガード・変更後の検証ゲート・既定ブランチ保護）
+│   ├── hooks/guard.sh     # 既定ブランチへのcommit・pushと危険な操作を拒否（拒否専用）
 │   ├── hooks/harness.sh   # Claudeの事故防止ガード・検証ゲートをCodexイベントへ接続
 │   ├── skills/            # ~/.codex/skills への個別リンク（共通手順のCodex用入口）
 │   └── prompts/pr.md      # Codexの旧 /prompts:pr 入口（新しい入口は $pr）
@@ -108,7 +108,7 @@ dotfiles/
     ├── claude-notify.example.json # iPhoneプッシュ通知設定のテンプレート（~/.claude/claude-notify.json へコピー）
     ├── hooks/
     │   ├── notify.sh                 # Stop/Notification時にiPhoneへWeb Push通知
-    │   ├── pr-mode.sh                # /pr 実行中だけgit操作を自動許可、それ以外は拒否
+    │   ├── pr-mode.sh                # 既定ブランチへのcommit・pushを拒否し、それ以外のcommit・push・PR作成を自動承認、マージは確認
     │   ├── guard-destructive.sh      # 回復不能な操作（rm -rf・破壊的git操作等）を止める
     │   ├── verify-gate.sh            # dotfilesの検証コマンドを通すまでターンを終えさせない
     │   ├── validate-claude-config.sh # 設定ファイル編集直後の構文検証
@@ -178,7 +178,7 @@ nix flake update
 ```
 
 ### AIエージェント用コマンド・スキル
-- `/pr`：Claude Code / Grok / Codex / OpenCode単体では明示的な `/pr` 起動（OpenCodeは発言先頭の `@pr` も）で、変更をコミットしブランチをpushしてGitHubへPull Requestを作成する（通常の「PRを出して」だけでは起動しない。親から委譲された `delegated-worker` は commit / push / PR を行わない）
+- `/pr`：Claude Code / Grok / Codex / OpenCode単体で、作業完了後（検証が通ったとき）または明示的な `/pr` 起動（OpenCodeは発言先頭の `@pr` も）により、変更をコミットしブランチをpushしてGitHubへPull Requestを作成する。既定ブランチへの commit・push はフックが拒否し、PR のマージは常に確認になる（親から委譲された `delegated-worker` は commit / push / PR を行わない）
 - `/readme`：READMEをコードベースの現状に合わせて更新（なければ新規作成）する
 - `/clean-branches`：ローカルブランチのうちmain・develop以外を削除して整理する
 - `/nix-setup`：新規プロジェクトの開発環境をNixのdevShell + direnvでセットアップする
