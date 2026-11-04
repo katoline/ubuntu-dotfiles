@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.codex/hooks/guard.sh\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -35,22 +24,6 @@
             "type": "command",
             "command": "bash \"$HOME/.codex/hooks/harness.sh\"",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.codex/hooks/guard.sh\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.codex/hooks/guard.sh\"",
-            "timeout": 3
           }
         ]
       }

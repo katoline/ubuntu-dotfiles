@@ -36,25 +36,62 @@ report A04-chmod-ask ask "$(decision "$out")" "$out"
 out=$(op guard "$(jq -cn '{session_id:"opencode-g1",command:"git commit -m x",cwd:"/tmp"}')")
 report A05-guard-git-none none "$(decision "$out")" "Git の可否は pr-mode が担当する"
 
-echo "# B. pr-mode（通常・/pr 中・子・force）"
-out=$(op pr-pre "$(jq -cn '{session_id:"opencode-p1",command:"git commit -m x",cwd:"/tmp"}')")
-report B01-before-pr deny "$(decision "$out")" "$out"
-out=$(op pr-start '{"session_id":"opencode-p1"}')
-report B02-start-empty "" "$out" "pr-mode のフラグ作成（出力なし）"
-out=$(op pr-pre "$(jq -cn '{session_id:"opencode-p1",command:"git commit -m x",cwd:"/tmp"}')")
-report B03-in-pr-none none "$(decision "$out")" "$out"
-out=$(op pr-request "$(jq -cn '{session_id:"opencode-p1",command:"git commit -m x",cwd:"/tmp"}')")
-report B04-in-pr-allow allow "$(decision "$out")" "$out"
-out=$(op pr-request "$(jq -cn '{session_id:"opencode-p1",command:"gh pr merge 1",cwd:"/tmp"}')")
-report B05-merge-none none "$(decision "$out")" "merge は自動 allow しない"
-out=$(op pr-pre "$(jq -cn '{session_id:"opencode-p1",command:"git push --force origin x",cwd:"/tmp"}')")
-report B06-force-deny deny "$(decision "$out")" "$out"
-out=$(op pr-pre "$(jq -cn '{session_id:"opencode-p1",command:"git commit -m x",cwd:"/tmp",agent_id:"child"}')")
-report B07-child-deny deny "$(decision "$out")" "$out"
-out=$(op pr-stop '{"session_id":"opencode-p1"}')
-report B08-stop-empty "" "$out" "通常プロンプトの解除は canonical な pr-stop だけを使う（本文は渡さない）"
-out=$(op pr-pre "$(jq -cn '{session_id:"opencode-p1",command:"git commit -m x",cwd:"/tmp"}')")
-report B09-after-submit-deny deny "$(decision "$out")" "$out"
+echo "# B. pr-mode（既定ブランチ保護。pr-pre / pr-request の結果をそのまま使う）"
+REPOS="$W/repos"
+git_init() { # dir branch
+  local dir="$1" branch="$2"
+  mkdir -p "$dir"
+  git init -q -b "$branch" "$dir" 2>/dev/null || {
+    git init -q "$dir"
+    git -C "$dir" checkout -q -b "$branch"
+  }
+}
+git_init "$REPOS/main" main
+git_init "$REPOS/feat" feat/x
+git_init "$REPOS/trunk" trunk
+git -C "$REPOS/trunk" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+
+pre() { op pr-pre "$(jq -cn --arg s opencode-p1 --arg c "$1" --arg d "${2-/tmp}" '{session_id:$s,command:$c,cwd:$d}')"; }
+request() { op pr-request "$(jq -cn --arg s opencode-p1 --arg c "$1" --arg d "${2-/tmp}" '{session_id:$s,command:$c,cwd:$d}')"; }
+out=$(pre 'git commit -m x' "$REPOS/main")
+report B01-commit-main deny "$(decision "$out")" "$out"
+out=$(pre 'git commit -m x' "$REPOS/feat")
+report B02-commit-feat none "$(decision "$out")" "$out"
+out=$(request 'git commit -m x' "$REPOS/feat")
+report B03-request-commit-feat allow "$(decision "$out")" "$out"
+out=$(request 'git commit -m x' "$REPOS/main")
+report B04-request-commit-main deny "$(decision "$out")" "$out"
+out=$(pre 'gh pr merge 1')
+report B05-merge-ask ask "$(decision "$out")" "merge は PreToolUse で ask"
+out=$(request 'gh pr merge 1')
+report B06-request-merge-none none "$(decision "$out")" "merge は自動 allow しない"
+out=$(pre 'git push --force origin x' "$REPOS/feat")
+report B07-force-deny deny "$(decision "$out")" "$out"
+out=$(op pr-pre "$(jq -cn --arg d "$REPOS/feat" '{session_id:"opencode-p1",command:"git commit -m x",cwd:$d,agent_id:"child"}')")
+report B08-child-deny deny "$(decision "$out")" "$out"
+out=$(pre 'git push origin "$BRANCH"' "$REPOS/feat")
+report B09-vars-ask ask "$(decision "$out")" "$out"
+out=$(pre 'git push origin main' "$REPOS/feat")
+report B0A-push-dest-main deny "$(decision "$out")" "$out"
+out=$(pre 'git push origin feat/x' "$REPOS/feat")
+report B0B-push-dest-feat none "$(decision "$out")" "$out"
+out=$(pre "git -C $REPOS/main commit -m x" /tmp)
+report B0C-gitc-main deny "$(decision "$out")" "$out"
+out=$(pre "git -C $REPOS/feat commit -m x" /tmp)
+report B0D-gitc-feat none "$(decision "$out")" "$out"
+out=$(pre "cd $REPOS/main && git commit -m x" /tmp)
+report B0E-cd-main deny "$(decision "$out")" "$out"
+out=$(pre 'git push --all origin' "$REPOS/feat")
+report B0F-push-all deny "$(decision "$out")" "$out"
+out=$(pre 'git commit -m x' "$REPOS/trunk")
+report B0G-origin-head-deny deny "$(decision "$out")" "$out"
+out=$(op pr-pre "$(jq -cn --arg d "$REPOS/feat" '{session_id:"opencode-p1",command:"git commit -m x",cwd:$d,prompt:"/pr"}')")
+report B0H-prompt-pr-same none "$(decision "$out")" "プロンプトが /pr でも判定は変わらない"
+out=$(op pr-request "$(jq -cn --arg d "$REPOS/feat" '{session_id:"opencode-p1",command:"git commit -m x",cwd:$d,prompt:"/pr"}')")
+report B0I-prompt-pr-request-allow allow "$(decision "$out")" "プロンプトが /pr でも同じ"
+r=absent
+[ -e "$TMPDIR/claude-pr-mode-opencode-p1" ] && r=present
+report B0J-no-flag absent "$r" "フラグは作らない"
 
 echo "# C. verify-gate（adapter の正規化と TMPDIR 隔離）"
 VS=opencode-vg-$$
@@ -75,7 +112,7 @@ printf '{' | bash "$ADAPTER" guard >/dev/null 2>&1
 report D02-broken-json 1 "$?" "壊れた JSON は失敗"
 printf '{}' | bash "$ADAPTER" unknown >/dev/null 2>&1
 report D03-unknown-op 1 "$?" "未知の操作は失敗"
-printf '{"session_id":"../x"}' | bash "$ADAPTER" pr-start >/dev/null 2>&1
+printf '{"session_id":"../x","command":"true"}' | bash "$ADAPTER" pr-pre >/dev/null 2>&1
 report D04-bad-session 1 "$?" "session id を検証する"
 out=$(op guard '{"session_id":"opencode-g1","command":"true","cwd":"/tmp"}')
 report D05-no-decision none "$(decision "$out")" "通常コマンドは no-decision"

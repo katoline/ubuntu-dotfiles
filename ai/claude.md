@@ -1,7 +1,7 @@
 <!-- Claude Code 固有の差分（~/.claude/rules/claude.md はこのファイルへのリンク）。
      共通ルールは ai/core.md（~/.claude/CLAUDE.md）。ここへ重複させない。
      ブロック HTML コメントは読み込み前に除去されるので、経緯や理由はコメントに書く（コンテキストを消費しない）。
-     フックの契約と /pr 四層の詳細は dotfiles の .claude/README.md にある（必要になったら読む） -->
+     フックの契約と Git 操作の制御の詳細は dotfiles の .claude/README.md にある（必要になったら読む） -->
 
 # モデル運用（Claude Code）
 
@@ -25,6 +25,6 @@
 
 実体は dotfiles の `.claude/hooks/`。
 
-- `pr-mode.sh`：`/pr` 外では commit / push / PR の作成と更新を拒否する。`/pr` 中は単一コマンドだけ自動承認し、サブエージェントからの実行は拒否する。`${TMPDIR:-/tmp}/claude-pr-mode-*` を自分で作って迂回してはならない
+- `pr-mode.sh`：既定ブランチへの commit・push、force push、サブエージェントからの git 書き込みを拒否する。既定ブランチ以外の commit・push・PR の作成と更新は、単一コマンドなら確認なしで自動承認する。PR のマージは常に確認ダイアログになる
 - `guard-destructive.sh`：範囲外の削除・破壊的な git 操作・名前指定の一括プロセス終了を拒否または確認にする。拒否パターンを増やして抜け道を塞ぎ続けない
 - `verify-gate.sh`：dotfiles の検証対象を編集したセッションでは、検証コマンドが成功するまでターンを終えさせない（バックグラウンド実行では解除されないのでフォアグラウンドで実行する）

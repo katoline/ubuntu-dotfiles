@@ -7,8 +7,8 @@ Codex CLIとdesktopの個人用設定。Claude Codeと共通の指示・スキ�
 | 実体 | 配布先・役割 |
 | --- | --- |
 | `config.toml` | `~/.codex/config.toml`。ユーザーのモデル・reasoning effort、`on-request` と `auto_review` と `workspace-write`、ネットワーク設定 |
-| `hooks.json` | `~/.codex/hooks.json`。PR起動判定、シェル操作のガード、変更と検証の記録、終了時の検証ゲート |
-| `hooks/guard.sh` | `~/.codex/hooks/guard.sh`。明示的なPRモード以外でcommit・push・PR操作を拒否 |
+| `hooks.json` | `~/.codex/hooks.json`。シェル操作のガード、変更と検証の記録、終了時の検証ゲート |
+| `hooks/guard.sh` | `~/.codex/hooks/guard.sh`。既定ブランチへのcommit・push、PRのマージ、force push・削除系・sudo・サブエージェントのgit書き込みを拒否 |
 | `hooks/harness.sh` | `~/.codex/hooks/harness.sh`。Claudeの事故防止・検証ゲートをCodexのイベントへ接続 |
 | `skills/*` | `~/.codex/skills/*`。Codex用の入口から `.claude/skills/` の共通手順を読む |
 | `prompts/pr.md` | `~/.codex/prompts/pr.md`。旧 `/prompts:pr` 入口 |
@@ -79,13 +79,13 @@ Go の利用上限後に従量残高を消費しないため、利用者は Cons
 
 Codex の sandbox・承認・フックは OpenCode 内のツールに引き継がれないため、必要な制約は委譲プロンプトに書く。Codex は `git diff` でレビューし、追加の修正は `--session` で再依頼する。Codex 本体のモデル設定は変更しない。配布は `nix/home.nix` の `.codex/skills/opencode` リンクで行い、`home-manager switch`（ユーザーが実行）後に新しいチャットでスキル一覧を再読み込みする。
 
-スキルは `$名前` で明示起動できる。PRは文中の `$pr`（Codex と同じく直前の文字は問わず、直後が英数字・`_` `:` `-` 以外のとき。`$prでPRを作って` も起動し、`$prune` は対象外）、または前後の空白を除いた依頼文の先頭語が `/pr`・旧 `/prompts:pr` の場合だけ起動する。説明文中の `/pr` や自然言語の「PRを出して」では起動しない。旧custom promptは非推奨なので、新しい入口にはスキルを使う。[公式Skills](https://learn.chatgpt.com/docs/build-skills)、[公式Custom Prompts](https://learn.chatgpt.com/docs/custom-prompts)
+スキルは `$名前` で明示起動できる。PRは、作業が完了して検証が通ったときのほか、文中の `$pr`（Codex と同じく直前の文字は問わず、直後が英数字・`_` `:` `-` 以外のとき。`$prでPRを作って` も起動し、`$prune` は対象外）、または前後の空白を除いた依頼文の先頭語が `/pr`・旧 `/prompts:pr` の場合に起動する。説明文中の `/pr` だけでは起動しない。自然言語の「PRを出して」でも、検証が済んだ作業なら完了時と同じ手順を実行する。旧custom promptは非推奨なので、新しい入口にはスキルを使う。[公式Skills](https://learn.chatgpt.com/docs/build-skills)、[公式Custom Prompts](https://learn.chatgpt.com/docs/custom-prompts)
 
 CodexのPreToolUseは拒否専用で、Claudeのフックによる自動承認は使えない。共通の事故防止ガードが確認（ask）を求める操作は、承認情報の有無にかかわらず常に拒否する。`approvals_reviewer = "auto_review"` では承認がAIの自動レビューへ回るため、`require_escalated` の再試行でユーザー確認を代替しない。対象のコマンドと理由を示し、ユーザーに手動実行を依頼する。`clean-branches` の未マージブランチ強制削除も同様に、候補の一覧と理由、手動実行するコマンドを示す。拒否対象は停止し、別の書き方やツールで迂回しない。
 
-Codexはフックがタイムアウト・失敗すると止めずにツールを実行する（Claudeの `onFailure: "block"` に当たる設定が無い）ため、PreToolUseの `harness.sh`・`guard.sh` のtimeoutは30秒にしている。SessionEndのtimeoutはCodexの上限（3秒）を超えると毎回切り詰めの警告が出るため3秒にしている（処理はフラグの削除だけ）。
+Codexはフックがタイムアウト・失敗すると止めずにツールを実行する（Claudeの `onFailure: "block"` に当たる設定が無い）ため、PreToolUseの `harness.sh`・`guard.sh` のtimeoutは30秒にしている。
 
-PRモードは起動したターンだけ有効。`Stop` で終了した後は、検証ゲートによって続行する場合も `$pr` の再起動が必要になる。PR手順では検証を先に済ませ、commit・push・PR操作が終わるまでターンを終えない。
+既定ブランチ（main / master / origin/HEAD が指すブランチ）へのcommit・pushは、`$pr` の有無や承認モードに関係なく常に拒否する。それ以外のブランチでのcommit・push・PRの作成と更新はフックで止めず、Codexの承認ポリシーに任せる。PRのマージ、push先を判定できないコマンド、`--amend` / `--no-verify` / `-n` は、CodexのPreToolUseが確認ダイアログを返せないため拒否する。
 
 CLI 0.162.1では、実行中のプロセスにはPostToolUseを発火せず、`write_stdin` で完了を取得すると `Bash` として元のコマンドと出力を渡す。`tool_input` は `{command: 元コマンド}`、`tool_response` は切り詰め済みの出力文字列で、実行中のツール応答にある `session_id` とフックのpayloadは同一ではない。長い検証は完了まで待ち、実行中なら `write_stdin` で完了結果までポーリングする。[完了時のフック呼び出し](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs#L158-L169)、[フック入力の生成](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core/src/tools/context.rs#L432-L445)
 

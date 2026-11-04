@@ -1,6 +1,7 @@
 // shared-harness.js の state テスト。実際の adapter → 共通 guard / pr-mode / verify-gate を使う。
 // OpenCode 本体は起動せず、plugin が受け取る公開 hook の event shape を再現する。
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -14,6 +15,16 @@ fs.mkdirSync(path.join(process.env.HOME, ".claude"), { recursive: true })
 fs.mkdirSync(process.env.TMPDIR, { recursive: true })
 fs.mkdirSync(path.join(process.env.HOME, "orca/workspaces/repo/tmp"), { recursive: true })
 const SAFE = path.join(process.env.HOME, "orca/workspaces/repo/tmp/safe")
+const REPOS = path.join(BASE, "repos")
+const REPO_MAIN = path.join(REPOS, "main")
+const REPO_FEAT = path.join(REPOS, "feat")
+for (const [dir, branch] of [
+  [REPO_MAIN, "main"],
+  [REPO_FEAT, "feat/x"],
+]) {
+  fs.mkdirSync(dir, { recursive: true })
+  execFileSync("git", ["init", "-q", "-b", branch, dir])
+}
 
 let pass = 0
 const check = (name, fn) => {
@@ -146,144 +157,70 @@ try {
     assert.equal(h.handlers.context.length, 1)
   })
 
-  // /pr の明示 user で PR 権限が立ち、commit が ask → allow になる
-  sessions.pr = rootInfo("pr")
-  messages.pr = [user("p1", "/pr")]
-  await callContext(h, "pr")
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m1",
-    id: "c1",
-    input: { command: "git commit -m x", workdir: WORK },
-  })
-  const prAllow = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "m1", id: "c1" },
-    effect: "ask",
+  // ヘルパー: worktree のフル入力を記録して permission を評価する
+  const shell = async (sessionID, command, workdir, id, agent = "build") => {
+    await callBefore(h, {
+      tool: "shell",
+      sessionID,
+      agent,
+      messageID: `m-${id}`,
+      id,
+      input: { command, workdir },
+    })
+    const event = {
+      sessionID,
+      agent,
+      action: "shell",
+      resources: [command],
+      source: { type: "tool", messageID: `m-${id}`, id },
+      effect: "ask",
+    }
+    await callPermission(h, event)
+    return event
   }
-  await callPermission(h, prAllow)
-  check("explicit-pr-commit-allow", () => assert.equal(prAllow.effect, "allow"))
 
-  // 同じ user のまま context hook が再実行されても切り替えない（prompt admission 相当）
-  await callContext(h, "pr")
-  const stillPr = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "m1", id: "c1" },
-    effect: "ask",
-  }
-  await callPermission(h, stillPr)
-  check("pr-stays-on-same-user", () => assert.equal(stillPr.effect, "allow"))
+  // 既定ブランチ以外は /pr を起動していなくても commit を自動許可する
+  sessions.feat = rootInfo("feat")
+  messages.feat = [user("f1", "hello")]
+  await callContext(h, "feat")
+  const featCommit = await shell("feat", "git commit -m x", REPO_FEAT, "f1c")
+  check("feature-commit-allow-without-pr", () => assert.equal(featCommit.effect, "allow"))
 
-  // plugin 自身が送る synthetic（検証の再開・警告）は新しい実 user として扱わない
-  messages.pr.push(user("syn1", "verify-gate: warning", { metadata: { source: "dotfiles.shared-harness" } }))
-  await callContext(h, "pr")
-  const stillPrSynthetic = { ...stillPr, effect: "ask" }
-  await callPermission(h, stillPrSynthetic)
-  check("synthetic-not-new-user", () => assert.equal(stillPrSynthetic.effect, "allow"))
+  // 通常プロンプトと /pr プロンプトで挙動が変わらない
+  messages.feat.push(user("f2", "/pr"))
+  await callContext(h, "feat")
+  const featCommitPr = await shell("feat", "git commit -m x", REPO_FEAT, "f2c")
+  check("prompt-independent-allow", () => assert.equal(featCommitPr.effect, "allow"))
 
-  // 通常 user が来たら PR 権限を解除する
-  messages.pr.push(user("p2", "hello"))
-  await callContext(h, "pr")
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m2",
-    id: "c2",
-    input: { command: "git commit -m x", workdir: WORK },
-  })
-  const normal = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "m2", id: "c2" },
-    effect: "ask",
-  }
-  await callPermission(h, normal)
-  check("normal-prompt-clears-pr", () => assert.equal(normal.effect, "deny"))
+  // 既定ブランチへの commit / push は /pr 中でも deny
+  sessions.main = rootInfo("main")
+  messages.main = [user("m1", "/pr")]
+  await callContext(h, "main")
+  const mainCommit = await shell("main", "git commit -m x", REPO_MAIN, "m1c")
+  check("protected-commit-deny", () => assert.equal(mainCommit.effect, "deny"))
+  const mainPush = await shell("main", "git push", REPO_MAIN, "m1p")
+  check("protected-push-deny", () => assert.equal(mainPush.effect, "deny"))
+  const pushMain = await shell("feat", "git push origin main", REPO_FEAT, "f1p")
+  check("push-to-protected-deny", () => assert.equal(pushMain.effect, "deny"))
 
-  // 通常本文に引用された marker / SKILL の H1 では PR モードを開始しない
-  messages.pr.push(user("p3", "`<!-- pr-mode-enable -->` と `# PR作成` は本文中の言及"))
-  await callContext(h, "pr")
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m3",
-    id: "c3",
-    input: { command: "git commit -m x", workdir: WORK },
-  })
-  const quoted = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "m3", id: "c3" },
-    effect: "ask",
-  }
-  await callPermission(h, quoted)
-  check("quoted-marker-not-start", () => assert.equal(quoted.effect, "deny"))
+  // マージは常に ask、force push は deny、宛先不明の push は ask
+  const merge = await shell("feat", "gh pr merge 1", REPO_FEAT, "f1g")
+  check("merge-keeps-ask", () => assert.equal(merge.effect, "ask"))
+  const force = await shell("feat", "git push --force origin x", REPO_FEAT, "f1f")
+  check("force-push-deny", () => assert.equal(force.effect, "deny"))
+  const vars = await shell("feat", 'git push origin "$BRANCH"', REPO_FEAT, "f1v")
+  check("vars-push-ask", () => assert.equal(vars.effect, "ask"))
 
-  // P1: context hook だけが失敗しても、permission 評価の直前に最新 user を引き直して deny する
-  sessions.stale = rootInfo("stale")
-  messages.stale = [user("s1", "/pr")]
-  await callContext(h, "stale")
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "stale",
-    agent: "build",
-    messageID: "sm1",
-    id: "sc1",
-    input: { command: "git commit -m x", workdir: WORK },
-  })
-  const stalePr = {
-    sessionID: "stale",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "sm1", id: "sc1" },
-    effect: "ask",
-  }
-  await callPermission(h, stalePr)
-  check("stale-pr-allow", () => assert.equal(stalePr.effect, "allow"))
-  messages.stale.push(user("s2", "normal follow-up"))
-  const realStaleContext = h.ctx.session.context
-  h.ctx.session.context = async ({ sessionID }) => {
-    if (sessionID === "stale") throw new Error("context failed")
-    return realStaleContext({ sessionID })
-  }
-  await callContext(h, "stale")
-  h.ctx.session.context = realStaleContext
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "stale",
-    agent: "build",
-    messageID: "sm2",
-    id: "sc2",
-    input: { command: "git commit -m x", workdir: WORK },
-  })
-  const staleAllow = {
-    sessionID: "stale",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "sm2", id: "sc2" },
-    effect: "ask",
-  }
-  await callPermission(h, staleAllow)
-  check("stale-pr-denied-after-new-user", () => assert.equal(staleAllow.effect, "deny"))
+  // 通常子・worker の Git 書き込みは agent_id 付きで拒否する
+  sessions.child = rootInfo("child", { parentID: "feat" })
+  const child = await shell("child", "git commit -m x", REPO_FEAT, "c1")
+  check("child-git-deny", () => assert.equal(child.effect, "deny"))
+  sessions.worker = rootInfo("worker", { agent: "delegated-worker" })
+  const worker = await shell("worker", "git push origin x", REPO_FEAT, "w1", "delegated-worker")
+  check("worker-git-deny", () => assert.equal(worker.effect, "deny"))
 
-  // session.get に失敗したら、古い権限を使わず deny する
+  // session.get に失敗したら拒否する（判定に必要な情報が無い）
   sessions.getfail = rootInfo("getfail")
-  messages.getfail = [user("g1", "/pr")]
-  await callContext(h, "getfail")
   const realGet = h.ctx.session.get
   h.ctx.session.get = async ({ sessionID }) => {
     if (sessionID === "getfail") throw new Error("get failed")
@@ -302,93 +239,20 @@ try {
     assert.match(getFail.message, /セッション情報/)
   })
 
-  // 通常子・worker の Git 書き込みは agent_id 付きで拒否する
-  sessions.child = rootInfo("child", { parentID: "pr" })
-  messages.child = [user("cu1", "do it")]
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "child",
-    agent: "build",
-    messageID: "cm1",
-    id: "cc1",
-    input: { command: "git commit -m x", workdir: WORK },
-  })
-  const child = {
-    sessionID: "child",
-    agent: "build",
-    action: "shell",
-    resources: ["git commit -m x"],
-    source: { type: "tool", messageID: "cm1", id: "cc1" },
-    effect: "ask",
+  // context の取得に失敗しても、Git の許可判定は会話に依存しないので allow のまま
+  sessions.nocontext = rootInfo("nocontext")
+  const realContextForPerm = h.ctx.session.context
+  h.ctx.session.context = async ({ sessionID }) => {
+    if (sessionID === "nocontext") throw new Error("context failed")
+    return realContextForPerm({ sessionID })
   }
-  await callPermission(h, child)
-  check("child-git-deny", () => assert.equal(child.effect, "deny"))
-
-  sessions.worker = rootInfo("worker", { agent: "delegated-worker" })
-  messages.worker = [user("wu1", "work")]
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "worker",
-    agent: "delegated-worker",
-    messageID: "wm1",
-    id: "wc1",
-    input: { command: "git push origin x", workdir: WORK },
-  })
-  const worker = {
-    sessionID: "worker",
-    agent: "delegated-worker",
-    action: "shell",
-    resources: ["git push origin x"],
-    source: { type: "tool", messageID: "wm1", id: "wc1" },
-    effect: "ask",
-  }
-  await callPermission(h, worker)
-  check("worker-git-deny", () => assert.equal(worker.effect, "deny"))
-
-  // force push は /pr 中でも拒否、merge は allow にしない
-  messages.pr.push(user("p4", "/pr"))
-  await callContext(h, "pr")
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m4",
-    id: "c4",
-    input: { command: "git push --force origin x", workdir: WORK },
-  })
-  const force = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: ["git push --force origin x"],
-    source: { type: "tool", messageID: "m4", id: "c4" },
-    effect: "ask",
-  }
-  await callPermission(h, force)
-  check("force-push-deny", () => assert.equal(force.effect, "deny"))
-
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m5",
-    id: "c5",
-    input: { command: "gh pr merge 1", workdir: WORK },
-  })
-  const merge = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: ["gh pr merge 1"],
-    source: { type: "tool", messageID: "m5", id: "c5" },
-    effect: "ask",
-  }
-  await callPermission(h, merge)
-  check("merge-keeps-ask", () => assert.equal(merge.effect, "ask"))
+  const noContext = await shell("nocontext", "git commit -m x", REPO_FEAT, "n1")
+  h.ctx.session.context = realContextForPerm
+  check("context-failure-does-not-deny", () => assert.equal(noContext.effect, "allow"))
 
   // resources しか無い fallback は制限の追加だけ。pr-request の allow に昇格しない。
   const fallbackInstall = {
-    sessionID: "pr",
+    sessionID: "feat",
     agent: "build",
     action: "shell",
     resources: ["npm install -g pkg"],
@@ -397,79 +261,31 @@ try {
   await callPermission(h, fallbackInstall)
   check("fallback-install-stays-ask", () => assert.equal(fallbackInstall.effect, "ask"))
   const fallbackGit = {
-    sessionID: "pr",
+    sessionID: "feat",
     agent: "build",
     action: "shell",
     resources: ["git commit -m x"],
     effect: "ask",
   }
   await callPermission(h, fallbackGit)
-  // /pr 中でもフル入力が無いため allow には上げない
   check("fallback-git-stays-ask", () => assert.equal(fallbackGit.effect, "ask"))
 
+  // guard 担当 family の安全な削除は従来どおり allow へ下げる
   fs.mkdirSync(SAFE, { recursive: true })
   const safeRm = `rm -rf ${SAFE}`
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m6",
-    id: "c6",
-    input: { command: safeRm, workdir: WORK },
-  })
-  const safe = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: [safeRm],
-    source: { type: "tool", messageID: "m6", id: "c6" },
-    effect: "ask",
-  }
-  await callPermission(h, safe)
+  const safe = await shell("feat", safeRm, WORK, "s1")
   check("safe-guard-family-downgraded", () => assert.equal(safe.effect, "allow"))
 
   const compositeCmd = `rm -rf ${SAFE} && npm install -g pkg`
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m7",
-    id: "c7",
-    input: { command: compositeCmd, workdir: WORK },
-  })
-  const composite = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: [compositeCmd],
-    source: { type: "tool", messageID: "m7", id: "c7" },
-    effect: "ask",
-  }
-  await callPermission(h, composite)
+  const composite = await shell("feat", compositeCmd, WORK, "s2")
   check("composite-not-downgraded", () => assert.equal(composite.effect, "ask"))
 
   const findCmd = "find . -delete"
-  await callBefore(h, {
-    tool: "shell",
-    sessionID: "pr",
-    agent: "build",
-    messageID: "m8",
-    id: "c8",
-    input: { command: findCmd, workdir: WORK },
-  })
-  const findDelete = {
-    sessionID: "pr",
-    agent: "build",
-    action: "shell",
-    resources: [findCmd],
-    source: { type: "tool", messageID: "m8", id: "c8" },
-    effect: "ask",
-  }
-  await callPermission(h, findDelete)
+  const findDelete = await shell("feat", findCmd, WORK, "s3")
   check("find-not-downgraded", () => assert.notEqual(findDelete.effect, "allow"))
 
   const explicitDeny = {
-    sessionID: "pr",
+    sessionID: "feat",
     action: "shell",
     resources: ["rm -rf /"],
     effect: "deny",
@@ -477,46 +293,16 @@ try {
   await callPermission(h, explicitDeny)
   check("explicit-deny-kept", () => assert.equal(explicitDeny.effect, "deny"))
 
-  // context が取れない session は、共通 flag が無いので pr-pre が拒否する
+  // 会話の context が取れない session でも、既定ブランチ以外の commit は許可する
   sessions.broken = rootInfo("broken")
-  await callContext(h, "broken")
-  const broken = {
-    sessionID: "broken",
-    action: "shell",
-    resources: ["git commit -m x"],
-    effect: "ask",
-  }
-  await callPermission(h, broken)
-  check("no-user-context-no-authority", () => assert.equal(broken.effect, "deny"))
+  const brokenGit = await shell("broken", "git commit -m x", REPO_FEAT, "b1")
+  check("no-user-context-still-allows", () => assert.equal(brokenGit.effect, "allow"))
 
-  // P1: 中断時の canonical clear が失敗したら保持し、次の評価で再試行し、失敗中は deny
-  sessions.clearfail = rootInfo("clearfail")
-  messages.clearfail = [user("cf1", "/pr")]
-  await callContext(h, "clearfail")
-  const realPath = process.env.PATH
-  process.env.PATH = "/nonexistent"
-  h.push({ type: "session.execution.interrupted", data: { sessionID: "clearfail" } })
-  await sleep(150)
-  const clearBroken = {
-    sessionID: "clearfail",
-    action: "shell",
-    resources: ["git commit -m x"],
-    effect: "ask",
-  }
-  await callPermission(h, clearBroken)
-  process.env.PATH = realPath
-  check("clear-failure-denies", () => {
-    assert.equal(clearBroken.effect, "deny")
-    assert.match(clearBroken.message, /解除|PR/)
-  })
-  const clearRecovered = {
-    sessionID: "clearfail",
-    action: "shell",
-    resources: ["git commit -m x"],
-    effect: "ask",
-  }
-  await callPermission(h, clearRecovered)
-  check("clear-retry-then-clear", () => assert.equal(clearRecovered.effect, "deny"))
+  // 中断しても PR 状態を持たない（次の commit 判定はブランチだけで決まる）
+  h.push({ type: "session.execution.interrupted", data: { sessionID: "feat" } })
+  await sleep(80)
+  const afterInterrupt = await shell("feat", "git commit -m x", REPO_FEAT, "f3c")
+  check("interrupt-does-not-deny", () => assert.equal(afterInterrupt.effect, "allow"))
 
   // verify-gate: 編集 → 成功終了で 1 回だけ再開。2 回目は pending を消さず警告だけ。
   const pendingFile = path.join(process.env.TMPDIR, "claude-verify-gate-opencode-verify")
