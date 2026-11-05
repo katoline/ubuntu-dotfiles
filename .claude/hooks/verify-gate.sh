@@ -3,7 +3,11 @@
 # 検証ゲートフック（dotfiles の検証コマンドを実行するまでターンを終えさせない）
 #
 # 契約: dotfiles の検証対象ファイルを Edit / Write / NotebookEdit で変更したセッションでは、対応する検証コマンドが
-# 成功するまでターンを終えさせない（1 回だけ続行させ、それでも未検証なら終了を許してユーザーに警告し、記録を消す）。
+# 成功するまでターンを終えさせない。Stop で記録が残っていれば block して 1 回続行させ、block 済みマーカーを作る。
+# 検証せずに自分が block した後の Stop（stop_hook_active=true かつマーカーあり）では systemMessage で警告し、
+# 記録とマーカーを消す。block の後に検証対象を編集し直したらマーカーを消し、もう一度だけ続行させる。
+# 他 CLI / 他フックの Stop が block した場合も stop_hook_active=true で届くが、マーカーが無ければ自分の「2 回目」では
+# ないので block する（completion-gate の block で、検証を一度も促せず諦めるのを防ぐ）。
 #
 # リポジトリの AGENTS.md は「.claude/ 配下や各CLIの設定を変えたら bash .claude/tests/run.sh、flake.nix / nix/ を
 # 変えたら nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath」と定めているが、
@@ -11,7 +15,8 @@
 #
 # 登録イベントと役割（1 本のスクリプトを hook_event_name / tool_name で分岐）:
 # - PostToolUse(Edit|Write|NotebookEdit): 編集先を実体パスに解決し、dotfiles ルート（このスクリプトの実体から ../..）の
-#   内側なら分類して、状態ファイルにカテゴリ名を重複なしで記録する
+#   内側なら分類して、状態ファイルにカテゴリ名を重複なしで記録する。記録対象の編集なら（既に記録済みでも）block 済み
+#   マーカーを消す（block の後に編集し直したら、もう一度だけ止める）
 #     run.sh   … .claude/hooks/**・.claude/tests/**・.claude/settings.json・.claude/setup.sh・bootstrap.sh・
 #                .claude/skills/** のうち .md 以外と .claude/skills/<名前>/SKILL.md・.claude/agents/<名前>.md・
 #                ai/**・codex/**・devin/**・opencode/*.json・opencode/setup.sh
@@ -26,10 +31,12 @@
 #   HOOKS_DIR= 付きの実行は別の場所のフックを検査しているので数えない。相対形は cwd がこの dotfiles の .claude を
 #   指し、かつコマンドが cd や複合コマンドで別ディレクトリへ移らないときだけ解除する＝別リポジトリの同名
 #   tests/run.sh の成功では解除しない。状態は編集した worktree ごとに保持し、別 worktree の成功では消さない）
-# - Stop: 記録が残っていれば、stop_hook_active が false なら decision: block と理由で 1 回だけ続行させる（記録は残す）。
-#   true なら systemMessage で未検証のまま終了した旨を警告し、記録を消す（無限ループ防止。次に対象を編集するまで促さない）
+# - Stop: 記録が残っていれば、stop_hook_active=true かつ block 済みマーカー（状態ファイル名 + `.blocked`）があるときだけ
+#   systemMessage で未検証のまま終了した旨を警告し、記録とマーカーを消す（次に対象を編集するまで促さない）。
+#   それ以外（active=false、または active=true でもマーカーが無い）は decision: block と理由で続行させ、マーカーを作る
 #
 # 状態ファイル: ${TMPDIR:-/tmp}/claude-verify-gate-<session_id>（1 行 1 エントリ、`<カテゴリ>\t<worktree トップ>`）
+# block 済みマーカー: ${TMPDIR:-/tmp}/claude-verify-gate-<session_id>.blocked
 # 制約: session_id 単位（サブエージェントの編集も同じ session_id で届く）。Bash（sed -i 等）による編集は検出しない。
 #   session_id が無い・不正な文字を含む・jq が無い・入力 JSON が壊れている → 何もせず exit 0。どのイベントでも exit 0 固定。
 
@@ -147,12 +154,12 @@ is_direct_nix_eval() {
   [[ "$1" =~ $re ]]
 }
 
-# カテゴリと worktree の組を状態ファイルから消し、空になったらファイルごと消す
+# カテゴリと worktree の組を状態ファイルから消し、空になったらファイルごと消す（block 済みマーカーも消す）
 remove_pending() { # category top
   [ -f "$STATE" ] || return 0
   local tmp="${STATE}.tmp.$$"
   grep -vxF -- "$1"$'\t'"$2" "$STATE" >"$tmp"
-  if [ -s "$tmp" ]; then mv -f "$tmp" "$STATE"; else rm -f "$tmp" "$STATE"; fi
+  if [ -s "$tmp" ]; then mv -f "$tmp" "$STATE"; else rm -f "$tmp" "$STATE" "${STATE}.blocked"; fi
 }
 
 # Stop 時の説明文（カテゴリと、実際に検証すべき worktree）
@@ -168,7 +175,11 @@ case "$event" in
     case "$tool" in
       Edit | Write | NotebookEdit)
         [ -n "$f" ] || exit 0
-        classify "$(resolve "$f")" | while IFS=$'\t' read -r c top; do
+        entries=$(classify "$(resolve "$f")")
+        [ -n "$entries" ] || exit 0
+        # 記録対象の編集なら、block 済みマーカーを消す（block の後に編集し直したら、もう一度だけ止める）
+        rm -f "${STATE}.blocked"
+        printf '%s\n' "$entries" | while IFS=$'\t' read -r c top; do
           [ -n "$c" ] || continue
           [ -n "$top" ] || top="$ROOT"
           ! grep -qxF -- "$c"$'\t'"$top" "$STATE" 2>/dev/null && printf '%s\t%s\n' "$c" "$top" >>"$STATE"
@@ -208,16 +219,17 @@ case "$event" in
       names="${names:+${names}、}${c}（${top}）"
     done <"$STATE"
     [ -n "$names" ] || exit 0
-    if [ "$active" = "true" ]; then
+    if [ "$active" = "true" ] && [ -f "${STATE}.blocked" ]; then
       msg="verify-gate: dotfiles の検証（${names}）が未実行のままターンを終了しました。変更は未検証です。検証対象のファイルを新たに編集するまで、これ以上は続行を促しません。検証するには次を実行させてください。
 ${pending}"
       jq -cn --arg m "$msg" '{systemMessage: $m}'
-      rm -f "$STATE"
+      rm -f "$STATE" "${STATE}.blocked"
     else
       reason="verify-gate: このセッションで dotfiles の検証対象ファイルを変更しましたが、対応する検証（${names}）がまだ成功していません。ターンを終える前に次を実行してください（| tail 等でパイプしてもよい。出力で成功を判定する）。バックグラウンド実行（run_in_background）では結果が届かず解除されないので、フォアグラウンドで実行する。
 ${pending}
 失敗した場合は自分の変更が原因なら直して再実行する。自分の変更と無関係な既存の失敗なら直さずユーザーに報告する。どうしても実行できない場合は、報告に「未検証」と明記してから終える。"
       jq -cn --arg r "$reason" '{decision: "block", reason: $r}'
+      : >"${STATE}.blocked"
     fi
     ;;
 esac
