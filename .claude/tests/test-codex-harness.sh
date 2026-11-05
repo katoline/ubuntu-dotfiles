@@ -80,6 +80,13 @@ out=$(stop); report B10-poll-text-failure block "$(jget "$out" '.decision // "no
 verified '"すべて通過\n"'
 out=$(stop); report B11-poll-text-success none "$(jget "$out" '.decision // "none"')" "$out"
 
+# block の後に記録対象を再編集すると、active=true の Stop でも再び block し、再編集しなければ次は警告になる
+edit
+out=$(stop); report B12-first-block block "$(jget "$out" '.decision // "none"')" "$out"
+edit
+out=$(stop true); report B13-reblock-after-reedit block "$(jget "$out" '.decision // "none"')" "$out"
+out=$(stop true); report B14-warn-without-reedit none "$(jget "$out" '.decision // "none"')" "$out"
+
 echo '# C. 移動先・失敗した編集・Stop の無限継続防止'
 call "$(post apply_patch '{"command":"*** Begin Patch\n*** Update File: README.md\n*** Move to: nix/example.nix\n@@\n-a\n+b\n*** End Patch"}' '{"success":true}')" >/dev/null
 out=$(stop); report C01-move-destination block "$(jget "$out" '.decision // "none"')" "$out"

@@ -47,6 +47,8 @@ stop() { # session stop_hook_active(true/false)
 }
 state_of() { if [ -f "$ST/claude-verify-gate-$1" ]; then cut -f1 "$ST/claude-verify-gate-$1" | paste -sd, -; else echo none; fi; }
 state_full() { if [ -f "$ST/claude-verify-gate-$1" ]; then paste -sd, - < "$ST/claude-verify-gate-$1"; else echo none; fi; }
+blocked_of() { if [ -f "$ST/claude-verify-gate-$1.blocked" ]; then echo yes; else echo no; fi; }
+clear_state() { rm -f "$ST/claude-verify-gate-$1" "$ST/claude-verify-gate-$1.blocked"; }
 jget() { if [ -z "$1" ]; then echo empty; else printf '%s' "$1" | jq -r "$2"; fi; }
 has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 
@@ -61,6 +63,7 @@ edit "$S1" Write "$W/repo/.claude/hooks/x.sh" >/dev/null
 report A03-dedup run.sh "$(state_of "$S1")" ""
 out=$(stop "$S1" false)
 report A04-stop-block block "$(jget "$out" '.decision // "none"')" "$out"
+report A04b-marker yes "$(blocked_of "$S1")" "block したら block 済みマーカーを作る"
 reason=$(jget "$out" '.reason // ""')
 report A05-reason-cmd yes "$(has "$reason" 'bash .claude/tests/run.sh')" "$reason"
 report A06-reason-root yes "$(has "$reason" "（${ROOT}）")" "$reason"   # 変数直後の全角括弧が壊れていない
@@ -78,6 +81,7 @@ bashrun "$S1" 'HOOKS_DIR=/tmp/x bash .claude/tests/run.sh' "$RUN_OK" >/dev/null
 report A14-hooks-dir-override run.sh "$(state_of "$S1")" ""
 bashrun "$S1" "bash $ROOT/.claude/tests/run.sh 2>&1 | tail -3" "$RUN_OK" >/dev/null
 report A15-cleared none "$(state_of "$S1")" ""
+report A15b-marker-cleared no "$(blocked_of "$S1")" "検証の成功で記録が空になったらマーカーも消す"
 out=$(stop "$S1" false); report A16-stop-silent "" "$out" "$out"
 out=$(stop "$S1" true);  report A17-stop-silent-active "" "$out" "$out"
 edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
@@ -108,20 +112,34 @@ bashrun "$S1" 'bash tests/run.sh 2>&1 | tail -n 3' "$RUN_OK" "$ROOT/.claude" >/d
 report A26-relative-tail-n none "$(state_of "$S1")" "tail -n N 形は許容する"
 rm -f "$ST/claude-verify-gate-$S1"
 
-echo "# B. stop_hook_active が true なら止めずに systemMessage で警告し、記録を消す"
+echo "# B. 従来の流れ（active=false で block → 未検証のまま active=true で systemMessage）。active=true でもマーカーが無ければ block"
 edit "$S1" Edit "$W/repo/.claude/hooks/x.sh" >/dev/null
+out=$(stop "$S1" false)
+report B01-first-block block "$(jget "$out" '.decision // "none"')" "active=false は従来どおり block する"
+report B01b-marker yes "$(blocked_of "$S1")" "block したらマーカーを作る"
 out=$(stop "$S1" true)
-report B01-no-decision none "$(jget "$out" '.decision // "none"')" "$out"
+report B02-no-decision none "$(jget "$out" '.decision // "none"')" "$out"
 msg=$(jget "$out" '.systemMessage // ""')
-report B02-sysmsg yes "$(has "$msg" '未実行のまま')" "$out"
-report B03-sysmsg-cmd yes "$(has "$msg" 'bash .claude/tests/run.sh')" "$out"
+report B03-sysmsg yes "$(has "$msg" '未実行のまま')" "$out"
+report B03b-sysmsg-cmd yes "$(has "$msg" 'bash .claude/tests/run.sh')" "$out"
 report B04-state-removed none "$(state_of "$S1")" "警告した分は記録から消える（次のターンで促さない）"
+report B04b-marker-removed no "$(blocked_of "$S1")" "警告したらマーカーも消す"
 out=$(stop "$S1" false); report B05-next-turn-silent "" "$out" "$out"
+# 追加ケース 1: 編集直後に一度も block せず active=true の Stop が来る（他の Stop フックの block 由来）。
+# 自分のマーカーが無いので自分の 2 回目ではなく、block する（旧仕様は警告のみだったため期待値を変更した）
 edit "$S1" Edit "$W/repo/flake.nix" >/dev/null
 report B06-reedit-records "nix eval" "$(state_of "$S1")" "新たに編集すれば再び促す"
-out=$(stop "$S1" false); report B07-reprompt block "$(jget "$out" '.decision // "none"')" "$out"
+out=$(stop "$S1" true)
+report B07-active-no-marker-block block "$(jget "$out" '.decision // "none"')" "$out"
+report B07b-marker yes "$(blocked_of "$S1")" ""
+# 追加ケース 2: block の後に検証対象を編集し直すとマーカーが消え、active=true でも再び block する
+edit "$S1" Edit "$W/repo/nix/home.nix" >/dev/null
+report B08-reedit-clears-marker no "$(blocked_of "$S1")" "block 後の再編集でマーカーを消す（既存エントリでも）"
+out=$(stop "$S1" true)
+report B09-reblock-after-reedit block "$(jget "$out" '.decision // "none"')" "$out"
 bashrun "$S1" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath' "$NIX_OK" "$ROOT" >/dev/null
-report B08-cleared none "$(state_of "$S1")" ""
+report B10-cleared none "$(state_of "$S1")" ""
+report B10b-marker-cleared no "$(blocked_of "$S1")" ""
 
 echo "# C. nix eval カテゴリと両方のカテゴリ"
 edit "$S2" Edit "$W/repo/nix/home.nix" >/dev/null
@@ -140,12 +158,15 @@ edit "$S2" Edit "$W/repo/.claude/dev-roots" >/dev/null
 report C06-dev-roots-both "run.sh,nix eval" "$(state_of "$S2")" "dev-roots は run.sh と nix eval の両方"
 reason=$(jget "$(stop "$S2" false)" '.reason // ""')
 report C07-both-reason "yes,yes" "$(has "$reason" 'bash .claude/tests/run.sh'),$(has "$reason" 'nix eval --raw')" "$reason"
+report C07b-marker yes "$(blocked_of "$S2")" "block したらマーカーを作る"
 bashrun "$S2" 'nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath 2>&1 | tail -1' "$NIX_OK" "$ROOT" >/dev/null
 report C08-one-left run.sh "$(state_of "$S2")" ""
-reason=$(jget "$(stop "$S2" false)" '.reason // ""')
-report C09-left-reason "yes,no" "$(has "$reason" 'bash .claude/tests/run.sh'),$(has "$reason" 'nix eval --raw')" "$reason"
-bashrun "$S2" 'bash .claude/tests/run.sh' "$RUN_OK" "$ROOT" >/dev/null
-report C10-all-cleared none "$(state_of "$S2")" ""
+# 残りカテゴリがあっても、マーカーがあれば block せず警告して記録を消す（旧 stop_hook_active の 2 回目と同じ）
+out=$(stop "$S2" true)
+report C09-left-warn none "$(jget "$out" '.decision // "none"')" "マーカーがあれば止めない"
+report C09b-left-sysmsg yes "$(has "$(jget "$out" '.systemMessage // ""')" '未実行のまま')" "$out"
+report C09c-left-state none "$(state_of "$S2")" "警告で残りの記録も消える"
+report C09d-marker-removed no "$(blocked_of "$S2")" ""
 len=$(jget "$(edit "$S2" Edit "$W/repo/.claude/dev-roots" >/dev/null; stop "$S2" false)" '.reason // "" | length')
 if [ "$len" != empty ] && [ "$len" -gt 0 ] && [ "$len" -le 10000 ]; then ok=yes; else ok=no; fi
 report C11-reason-length yes "$ok" "length=${len}"

@@ -79,6 +79,14 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/completion-gate.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -142,6 +150,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.claude/hooks/verify-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/completion-gate.sh"
           }
         ]
       },
@@ -161,6 +173,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.claude/hooks/verify-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/completion-gate.sh"
           }
         ]
       }
@@ -176,6 +192,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.claude/hooks/verify-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/completion-gate.sh"
           }
         ]
       },

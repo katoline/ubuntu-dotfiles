@@ -14,7 +14,7 @@ Claude Code・Grok・OpenCode・Codex・Devin の 5 つの CLI へ、**同じ共
 
 | ファイル | 役割 |
 | --- | --- |
-| `core.md` | 共通ルール（言語・Git操作の制限・ファイル削除とプロセス停止・変更後の検証・レビューの範囲・秘密情報・Nix運用・サブエージェント・compact時に残すこと） |
+| `core.md` | 共通ルール（言語・Git操作の制限・ファイル削除とプロセス停止・作業の進め方（PDCA）・変更後の検証・レビューの範囲・秘密情報・Nix運用・サブエージェント・compact時に残すこと） |
 | `claude.md` | Claude Code 固有（モデル運用とレビューのモデル分離、フックの挙動） |
 | `grok.md` | Grok 固有（サブエージェントの種類、permission mode と `/pr`） |
 | `opencode.md` | OpenCode 固有（単体はメイン担当、`delegated-worker` は親から委譲された実装・調査・検証担当、Hooks が動かないこと） |
