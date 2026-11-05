@@ -5,7 +5,7 @@
 #       hooks/lib/*.awk の構文、SKILL.md / agents の frontmatter、
 #       settings.json のフック・statusLine の登録元検査、
 #       フックと共通指示の配布、ホーム側の CLI 設定マージのテスト
-#       （pr-mode / guard-destructive / verify-gate / validate-claude-config / ai-install / codex-guard / codex-harness / grok-compat / git-pull / cli-config / opencode-permissions / opencode-harness。
+#       （pr-mode / guard-destructive / verify-gate / completion-gate / validate-claude-config / ai-install / codex-guard / codex-harness / grok-compat / git-pull / cli-config / opencode-permissions / opencode-harness。
 #         各テストの summary 行も検査する）
 # 環境変数 HOOKS_DIR を指定すると、別の場所にあるフック（作業コピー）をテストできる
 # CLI 設定マージは python3 に tomlkit が無ければ flake の共通 Python を Nix で取得する（初回は時間がかかる）。
