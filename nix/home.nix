@@ -172,7 +172,11 @@ in
       source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/codex/skills/opencode";
       force = true;
     };
-    # Devin config.json も mergeCliConfigs で実ファイルにして org_id 等を残す。
+    # Codex のカスタムエージェント（~/.codex/agents/<名前>.toml）。ファイル単位で個別リンクする
+    ".codex/agents/reviewer.toml" = {
+      source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/codex/agents/reviewer.toml";
+      force = true;
+    };
     # OpenCode のグローバル設定。permission・CLI設定・通知plugin・Command・Agent・Skillを
     # リポジトリ実体への書き込み可能リンクにして、変更をdotfilesで管理する。
     # グローバル指示は ai/install.sh が ~/.config/opencode/AGENTS.md を連結生成する。
