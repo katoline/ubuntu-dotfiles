@@ -1,12 +1,12 @@
 # ubuntu-dotfiles 固有の指示
 
-Ubuntu用の個人dotfiles。全体像は `README.md`、Nix運用は `nix/README.md`、全CLI共通のグローバル指示は `ai/README.md`、各CLIの設定は `.claude/README.md`・`grok/README.md`・`opencode/README.md`。ここには作業ミスを防ぐ制約と検証方法だけを書く。
+Ubuntu用の個人dotfiles。全体像は `README.md`、Nix運用は `nix/README.md`、全CLI共通のグローバル指示は `ai/README.md`、各CLIの設定は `.claude/README.md`・`opencode/README.md`・`codex/README.md`。ここには作業ミスを防ぐ制約と検証方法だけを書く。
 
 ## 指示ファイル
 
-- このリポジトリの指示はこの `AGENTS.md` だけ（`CLAUDE.md` は作らない）。Claude Code・OpenCode・Codex・Grok・Devin のいずれも `AGENTS.md` を読む。
+- このリポジトリの指示はこの `AGENTS.md` だけ（`CLAUDE.md` は作らない）。現役の Claude Code・OpenCode・Codex はいずれも `AGENTS.md` を読む。Grok / Devin は休止中で、設定と復元手順は `archive/`（配布・導入・検証の対象外。`archive/` 配下は休止前の状態のまま残し、復元以外で手を入れない）。
 - グローバル指示の実体は `ai/` の1か所（共通コア `ai/core.md` ＋ CLI別差分 `ai/<cli>.md`）。配布は `ai/install.sh`（読み込み規則と配り方は `ai/README.md`）。プロジェクト固有ルールを `ai/` へ書かず、共通ルールをCLI別ファイルへ重複させない。
-- `ai/core.md` は5つのCLIが毎セッション全文を読むので短く保つ。CLI固有の記述（Claudeのモデル名・`settings.json`・Hooksの書き方）は `core.md` に置かない。経緯は各READMEへ。
+- `ai/core.md` は現役3つのCLIが毎セッション全文を読むので短く保つ。CLI固有の記述（Claudeのモデル名・`settings.json`・Hooksの書き方）は `core.md` に置かない。経緯は各READMEへ。
 
 ## 脅威モデル（レビューの前提）
 
@@ -15,15 +15,15 @@ Ubuntu用の個人dotfiles。全体像は `README.md`、Nix運用は `nix/README
 ## リポジトリ固有の制約
 
 - `bootstrap.sh`・`opencode/setup.sh` は検証目的で実行しない（インストールを行う）。`home-manager switch` も実行せず、評価後にユーザーへ依頼する。
-- 各CLI（Claude Code / Grok / OpenCode / Codex / Devin）をNix管理へ移さない（常に最新版を使うため公式インストーラー。導入は `bootstrap.sh`）。各CLIの認証情報と `~/.claude/claude-notify.json` は読まず保存しない。Claude/GrokのHooks・モデル設定が他CLIでも動くとは扱わない。
-- 連結生成した `~/.config/opencode/AGENTS.md`・`~/.grok/AGENTS.md`・`~/.codex/AGENTS.md`・`~/.config/devin/AGENTS.md` を手で編集しない（実体は `ai/`、再配布は `bash ai/install.sh`）。`~/.config/opencode/AGENTS.md` は消さず、`opencode.json` の `instructions` に `ai/` を列挙しない（`instructions` はファイルを解決できるが、`AGENTS.md` と `core.md` の二重読みになる。理由は `ai/README.md`）。
-- `grok/config.toml` の `[compat.claude]` は `rules = false`・`agents = false` を維持（true に戻すと `~/.claude/CLAUDE.md` を読んで二重になる）。`skills`・`hooks` は共有のため true のまま。
+- 各CLI（Claude Code / OpenCode / Codex）をNix管理へ移さない（常に最新版を使うため公式インストーラー。導入は `bootstrap.sh`）。各CLIの認証情報と `~/.claude/claude-notify.json` は読まず保存しない。ClaudeのHooks・モデル設定が他CLIでも動くとは扱わない。
+- 連結生成した `~/.config/opencode/AGENTS.md`・`~/.codex/AGENTS.md` を手で編集しない（実体は `ai/`、再配布は `bash ai/install.sh`）。`~/.config/opencode/AGENTS.md` は消さず、`opencode.json` の `instructions` に `ai/` を列挙しない（`instructions` はファイルを解決できるが、`AGENTS.md` と `core.md` の二重読みになる。理由は `ai/README.md`）。
+- Grok / Devin を復元するときの制約（`grok/config.toml` の `[compat.claude]` 等）と手順は `archive/README.md` と `archive/grok/README.md` を見る。
 - `.claude/` は全プロジェクトに反映される。home-manager標準管理へ移さない（`setup.sh` のセルフヒーリングを維持）。`~/.claude/rules/claude.md`（実体 `ai/claude.md`）はClaude Code専用なので共通ルールを置かない。
 - `.claude/settings.json` の Orca 由来のフック・`statusLine`（コマンドに `orca` を含むもの）は手で編集しない。`pr-mode.sh`・`guard-destructive.sh` の `onFailure: "block"` を外さない（外すとフックが壊れたとき黙って素通りになる）。登録元が増えたら中身を確認して `tests/run.sh` の許可リストに足す。
-- Git 書き込みの制御は「既定ブランチ保護」方式：既定ブランチ（main / master / origin/HEAD）への commit・push は全CLIでフックが常に deny し、それ以外の commit・push・PR の作成と更新は自動承認する。確認ダイアログを出すのは既定ブランチを base にする PR のマージだけ（`gh pr merge` は base を調べ、判定不能なら確認。`gh api` のマージは常に確認）。Codex はフックが ask を返せないので PR のマージを deny、Devin はフックが無いので `devin/config.json` の ask と指示で守る。判定の実体は `.claude/hooks/lib/git-write.sh` の1か所で、`pr-mode.sh`（Claude / Grok / OpenCode の adapter）と `codex/hooks/guard.sh` が共有する。方針を変えるときは共通指示（`ai/core.md` の「Git操作の制限」）・Skill（各 `pr`）・permission・Hook をそろえる。`/pr` は同じ手順を明示的に起動する入口として残す。親から委譲された `delegated-worker` とサブエージェントは commit / push / PR を拒否する。
+- Git 書き込みの制御は「既定ブランチ保護」方式：既定ブランチ（main / master / origin/HEAD）への commit・push は全CLIでフックが常に deny し、それ以外の commit・push・PR の作成と更新は自動承認する。確認ダイアログを出すのは既定ブランチを base にする PR のマージだけ（`gh pr merge` は base を調べ、判定不能なら確認。`gh api` のマージは常に確認）。Codex はフックが ask を返せないので PR のマージを deny する。判定の実体は `.claude/hooks/lib/git-write.sh` の1か所で、`pr-mode.sh`（Claude / OpenCode の adapter）と `codex/hooks/guard.sh` が共有する。方針を変えるときは共通指示（`ai/core.md` の「Git操作の制限」）・Skill（各 `pr`）・permission・Hook をそろえる。`/pr` は同じ手順を明示的に起動する入口として残す。親から委譲された `delegated-worker` とサブエージェントは commit / push / PR を拒否する。
 - `.claude/hooks/guard-destructive.sh` の拒否パターンを際限なく増やさない（解釈不能な削除は deny に倒す設計を維持。ask は返さない）。削除可能ルートの定義は `.claude/dev-roots` だけ。パスのパターンは `*dotfiles/…` と書く（リポジトリ名が `ubuntu-dotfiles` でも一致させるため）。リンクされた git worktree のルートは許可ルート外でも `rm -rf` を通す。
 - `.claude/hooks/verify-gate.sh` の分類表（run.sh / nix eval）は下の「検証」節と対応させる。対象を増やしたら両方に足す。
-- `codex/hooks/guard.sh` は拒否専用（Codex の PreToolUse は承認を返せない前提）。`.claude/hooks/lib/git-write.sh` はClaude（`pr-mode.sh`）・Grok・Codex（`guard.sh`）の共有判定で、変更時は `tests/test-pr-mode.sh` と `tests/test-codex-guard.sh` の両方を通す。Codexの `guard.sh` 変更時は後者、`harness.sh` 変更時は `tests/test-codex-harness.sh` を通す。
+- `codex/hooks/guard.sh` は拒否専用（Codex の PreToolUse は承認を返せない前提）。`.claude/hooks/lib/git-write.sh` はClaude・OpenCode（`pr-mode.sh`）・Codex（`guard.sh`）の共有判定で、変更時は `tests/test-pr-mode.sh` と `tests/test-codex-guard.sh` の両方を通す。Codexの `guard.sh` 変更時は後者、`harness.sh` 変更時は `tests/test-codex-harness.sh` を通す。
 - `nix/home.nix` の構成名は `ubuntu` 固定、`username` を動的取得にしない（flakeは環境変数を読めない）。`keyboard.nix` の ibus `embed-preedit-text = false` は戻さない。`editorUserFiles` の `force = true` を外さず、`window.titleBarStyle` / `menuStyle` / `menuBarVisibility` は一緒に変更する。`direnv` を `enableZshIntegration` に置き換えない（`~/.zshrc` は `mkOutOfStoreSymlink` 管理）。
 - `user.name` / `user.email` をリポジトリに書かない。
 
@@ -31,7 +31,7 @@ Ubuntu用の個人dotfiles。全体像は `README.md`、Nix運用は `nix/README
 
 - flakeはgit管理ファイルだけを評価する。新しい `.nix` を評価するときは先にユーザーへ `git add` を依頼する（`vscode/` の配布にはpushが必要）。
 - `.claude/` の追加・削除は `bash .claude/setup.sh` で配布する（対象はgit管理ファイルのみ。`.claude/tests/` はリンク対象外）。
-- `opencode/`・`codex/`・`devin/` の設定・Command・Agent・Skill は `nix/home.nix` から個別にリンクする。新しいファイルにはリンクを足す（グローバル指示は `ai/install.sh` が生成するのでリンクしない）。`delegated-worker` は `opencode/opencode.json` の `agents` に定義し、新規 `.nix` や staging を増やさない。`~/.codex/hooks.json`・`~/.codex/config.toml`・`~/.config/devin/config.json` は実ファイルにして、`detachCliConfigLinks`・`mergeCliConfigs` が外部ツールのローカル状態を保持する（リポジトリへの取り込みやリンクへの復元はしない）。
+- `opencode/`・`codex/` の設定・Command・Agent・Skill は `nix/home.nix` から個別にリンクする。新しいファイルにはリンクを足す（グローバル指示は `ai/install.sh` が生成するのでリンクしない）。`delegated-worker` は `opencode/opencode.json` の `agents` に定義し、新規 `.nix` や staging を増やさない。`~/.codex/hooks.json`・`~/.codex/config.toml` は実ファイルにして、`detachCliConfigLinks`・`mergeCliConfigs` が外部ツールのローカル状態を保持する（リポジトリへの取り込みやリンクへの復元はしない）。
 - `.claude/dev-roots` は1行1パス・`~/` 始まり（`#` 以降・前後の空白・末尾 `/` は無視）。読む側は `guard-destructive.sh`・`nix/home.nix`（`devDirs`）・`tests/test-guard-destructive.sh`。変更時は `git add .claude/dev-roots` をユーザーに依頼し、Nix評価・テスト・配布を通す。
 
 ## 作業記録（docs/）
@@ -49,7 +49,7 @@ Ubuntu用の個人dotfiles。全体像は `README.md`、Nix運用は `nix/README
 
 - `flake.nix` / `nix/` の変更後：`nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath`
 - `nix/merge-cli-config.py` の変更後：`bash .claude/tests/run.sh` と `nix eval --raw .#homeConfigurations.ubuntu.activationPackage.drvPath` の両方
-- `.claude/`・`ai/`・`codex/`・`devin/`・`opencode/` の設定と `bootstrap.sh` の変更後：`bash .claude/tests/run.sh`（設定JSON・シェル・JS・awkの構文、SKILL.md / agents の frontmatter、settings.json のフック登録元、フックと共通指示配布・OpenCode adapter/plugin のテーブル駆動テスト）
+- `.claude/`・`ai/`・`codex/`・`opencode/` の設定と `bootstrap.sh` の変更後：`bash .claude/tests/run.sh`（設定JSON・シェル・JS・awkの構文、SKILL.md / agents の frontmatter、settings.json のフック登録元、フックと共通指示配布・Codex / OpenCode の adapter・plugin のテーブル駆動テスト）
 - `ai/` の変更後は配布のため `bash ai/install.sh` も実行する（Claude Code 以外は連結生成）
 - シェル変更時：対象に応じて `bash -n bootstrap.sh` / `bash -n opencode/setup.sh` / `bash -n zsh/.zshrc`（`run.sh` が見るのは上記の対象のみ）
 - `claude-notify/` の変更後：`cd claude-notify && pnpm lint`

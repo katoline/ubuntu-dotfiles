@@ -1,4 +1,4 @@
-# SSH（iPhone）では tmux に入る。切断しても grok などが残る。
+# SSH（iPhone）では tmux に入る。切断しても claude / codex などが残る。
 # ローカルGNOME・VSCode統合端末では起動しない。回避は NOTMUX=1。
 # p10k instant prompt より前（exec するので出力はしない）
 if [[ -o interactive && -t 1 && -z "${TMUX:-}" && -n "${SSH_CONNECTION:-}" && -z "${NOTMUX:-}" && -z "${TERM_PROGRAM:-}" ]] && command -v tmux >/dev/null 2>&1; then
@@ -15,7 +15,7 @@ if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
 
-# grok / claude は ~/.local/bin。GUIログインは ~/.profile が通すが、
+# claude / codex は ~/.local/bin。GUIログインは ~/.profile が通すが、
 # zsh の SSH ログインは .profile を読まないのでここで足す（重複は避ける）
 if [[ -d "$HOME/.local/bin" && ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   export PATH="$HOME/.local/bin:$PATH"

@@ -2,7 +2,7 @@ result
 claude-notify/node_modules/
 # 記入済みの通知設定はVAPID秘密鍵を含むため誤コミット防止（実体は ~/.claude/claude-notify.json）
 .claude/claude-notify.json
-# プロジェクト固有の Claude Code / Grok 設定はグローバルへリンクさせない（setup.sh でも除外）
+# プロジェクト固有の Claude Code 設定はグローバルへリンクさせない（setup.sh でも除外）
 .claude/settings.local.json
 # 手元の参考資料・メモ置き場（リポジトリには含めない）
 /docs/

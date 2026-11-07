@@ -6,10 +6,10 @@
     "diffEditor.ignoreTrimWhitespace": false,
     "terminal.integrated.fontFamily": "UbuntuMono Nerd Font Mono",
     // VS Code 1.109+ は Kitty Keyboard Protocol が既定ON。xterm.js が
-    // press と release を二重に送り、Grok / Claude Code の TUI で
+    // press と release を二重に送り、Claude Code などの TUI で
     // 1キーが2文字入る。従来のキー符号化に戻す。
     "terminal.integrated.enableKittyKeyboardProtocol": false,
-    // Grok / Claude Code は入力のたびに画面を打ち直す TUI。local echo
+    // Claude Code などは入力のたびに画面を打ち直す TUI。local echo
     // （入力先読み）が Mozc の変換中プレビューをバッファへ焼き込み、
     // 確定文字と混ざって「ｋこｎこのこの」になる。
     "terminal.integrated.localEchoEnabled": "off",

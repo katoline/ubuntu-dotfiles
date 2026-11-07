@@ -1,22 +1,23 @@
 # Codexの設定とハーネス
 
-Codex CLIとdesktopの個人用設定。Claude Codeと共通の指示・スキル手順を使い、コミット制限、削除の事故防止、dotfiles変更後の検証をCodexのフックへ接続する。
+Codex CLIとdesktopの個人用設定。Claude Codeと共通の指示・スキル手順を使い、コミット制限、削除の事故防止、dotfiles変更後の検証、完了時のチェック（PDCAのCheck）をCodexのフックへ接続する。Codexは設計・レビューを担い、実装・調査・テストは `$opencode` でOpenCodeへ常時委譲する。
 
 ## 管理するファイル
 
 | 実体 | 配布先・役割 |
 | --- | --- |
 | `config.toml` | `~/.codex/config.toml`。ユーザーのモデル・reasoning effort、`on-request` と `auto_review` と `workspace-write`、ネットワーク設定 |
-| `hooks.json` | `~/.codex/hooks.json`。シェル操作のガード、変更と検証の記録、終了時の検証ゲート |
+| `hooks.json` | `~/.codex/hooks.json`。シェル操作のガード、変更と検証の記録、ターン開始（UserPromptSubmit）の記録、終了時の検証ゲートと完了チェック |
 | `hooks/guard.sh` | `~/.codex/hooks/guard.sh`。既定ブランチへのcommit・push、PRのマージ、force push・削除系・sudo・サブエージェントのgit書き込みを拒否 |
-| `hooks/harness.sh` | `~/.codex/hooks/harness.sh`。Claudeの事故防止・検証ゲートをCodexのイベントへ接続 |
+| `hooks/harness.sh` | `~/.codex/hooks/harness.sh`。Claudeの事故防止・検証ゲート・完了チェック（`completion-gate.sh`）をCodexのイベントへ接続。Stopでは検証ゲートを優先する |
+| `agents/reviewer.toml` | `~/.codex/agents/reviewer.toml`。独立レビュー用のカスタムエージェント（`sandbox_mode = "read-only"`・メインと同じモデル）。Codexのサブエージェントはこのレビューだけに使う |
 | `skills/*` | `~/.codex/skills/*`。Codex用の入口から `.claude/skills/` の共通手順を読む |
 | `prompts/pr.md` | `~/.codex/prompts/pr.md`。旧 `/prompts:pr` 入口 |
 | `../ai/core.md`・`../ai/codex.md` | `bash ai/install.sh` が `~/.codex/AGENTS.md` を連結生成 |
 
 `nix/home.nix` の `mergeCliConfigs` が宣言設定をホーム側の実ファイルへマージする。モデルとreasoning effortはユーザーがリポジトリで決め、次のswitchでその値を反映する。ホーム側のUIだけで変更した宣言キーは次のswitchで戻る。Claude専用のモデル名やAgent設定は移植しない。
 
-リポジトリにはモデル・承認・サンドボックス・desktop表示設定・pluginの有効化を置く。`projects`、`hooks.state` の信頼ハッシュ、TUIの初回案内状態、marketplaceの配置、desktop生成MCPの実行パス・環境変数はホーム側だけで保持する。Devinの `org_id`・`shell.setup_complete` も同じ扱いにする。未知のローカルキーは削除せず、宣言したキーを再帰的に上書きする（配列は置き換える）。宣言からキーを削除しても既存のホーム側の値は残るので、値を無効にするには宣言値を変更するか、ホーム側で対象キーを削除する。[公式設定の層](https://learn.chatgpt.com/docs/config-file/config-basic)、[公式設定リファレンス](https://learn.chatgpt.com/docs/config-file/config-reference)
+リポジトリにはモデル・承認・サンドボックス・desktop表示設定・pluginの有効化を置く。`projects`、`hooks.state` の信頼ハッシュ、TUIの初回案内状態、marketplaceの配置、desktop生成MCPの実行パス・環境変数はホーム側だけで保持する。未知のローカルキーは削除せず、宣言したキーを再帰的に上書きする（配列は置き換える）。宣言からキーを削除しても既存のホーム側の値は残るので、値を無効にするには宣言値を変更するか、ホーム側で対象キーを削除する。[公式設定の層](https://learn.chatgpt.com/docs/config-file/config-basic)、[公式設定リファレンス](https://learn.chatgpt.com/docs/config-file/config-reference)
 
 `node_repl` の起動定義はdesktopに任せ、起動定義がホーム側にある場合だけ `enabled = true` を反映する。新規ホームに起動パスのないMCPを生成しない。pluginの配置・版はdesktopが生成したローカル状態を保持し、固定のキャッシュパスを宣言しない。
 
@@ -31,11 +32,9 @@ cp -L -p ~/.codex/config.toml ~/.codex/config.toml.local-migration &&
   mv -T ~/.codex/config.toml.local-migration ~/.codex/config.toml
 cp -L -p ~/.codex/hooks.json ~/.codex/hooks.json.local-migration &&
   mv -T ~/.codex/hooks.json.local-migration ~/.codex/hooks.json
-cp -L -p ~/.config/devin/config.json ~/.config/devin/config.json.local-migration &&
-  mv -T ~/.config/devin/config.json.local-migration ~/.config/devin/config.json
 ```
 
-ファイルが未作成のCLIは対応する2行を実行しない。取り込み後のswitchでは `detachCliConfigLinks` が旧管理リンクを `linkGeneration` より先に実ファイル化し、その後マージする。以後は外部ツールが実ファイルを更新してもリポジトリへ取り込まない。この作業でユーザーのホームやリンクを変更するのはユーザーが実行する移行とswitchだけ。
+ファイルが未作成なら対応する2行を実行しない。休止中のDevinの `~/.config/devin/config.json` はマージ対象から外したので移行しない（[`../archive/README.md`](../archive/README.md)）。取り込み後のswitchでは `detachCliConfigLinks` が旧管理リンクを `linkGeneration` より先に実ファイル化し、その後マージする。以後は外部ツールが実ファイルを更新してもリポジトリへ取り込まない。この作業でユーザーのホームやリンクを変更するのはユーザーが実行する移行とswitchだけ。
 
 ## 反映と使い方
 
@@ -65,19 +64,19 @@ home-manager switch --flake ~/Dev/kaishi/ubuntu-dotfiles#ubuntu
 | `/clean-branches` | `$clean-branches` |
 | `/opencode` | `$opencode` |
 
-Codex CLI 0.162.1は従来の `$CODEX_HOME/skills`（通常は `~/.codex/skills`）をユーザースキルの互換探索先として読む。他CLIも探索する `~/.agents/skills` へCodex専用の入口を配ると、Grok・OpenCode・DevinにもCodex用の指示が混入するため、専用の探索先へ隔離する。[公式実装](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/ext/skills/src/host_roots.rs)
+Codex CLI 0.162.1は従来の `$CODEX_HOME/skills`（通常は `~/.codex/skills`）をユーザースキルの互換探索先として読む。他CLIも探索する `~/.agents/skills` へCodex専用の入口を配ると、OpenCodeなどにもCodex用の指示が混入するため、専用の探索先へ隔離する。[公式実装](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/ext/skills/src/host_roots.rs)
 
 この探索先はdeprecatedとして互換維持されているため、将来Codexの探索仕様が変わる際は配置先を再確認する。
 
 ### OpenCodeへの委譲（`$opencode`）
 
-`codex/skills/opencode/SKILL.md` は、Codex から OpenCode へユーザーが明示的に作業を委譲したとき（`$opencode` や「OpenCodeに任せて」）の入口。Codex が要件整理・設計・指示・レビューを担い、OpenCode が実装・調査・検証を担う。ランナーは自動で `delegated-worker` Agent を使い、単体の OpenCode（既定 build）とは分離する。worker は commit / push / PR・worktree 変更・ユーザーへの質問・子への再委譲をしない。オプションなしは今回だけ、`--session-wide` は現在の親会話で以後の実装も委譲、`--once` は解除。継続指定は親会話の状態としてのみ持ち（compact 要約に有効/無効を残す）、設定ファイル・環境変数・フックでは永続化せず、別チャットへ持ち越さない。
+`codex/skills/opencode/SKILL.md` は、Codex から OpenCode へ作業を委譲する入口。Codex のメインセッションでは常時有効で、実装・複数ファイルにまたがる調査・テストの作成と実行・ドキュメント更新は、`$opencode` や「OpenCodeに任せて」と明示しなくても委譲する（ユーザーがその作業に「Codex でやって」等と明示したときだけメインで行う）。Codex は要件整理・設計・指示・レビュー・最終判断を担い、Codex のサブエージェントは独立レビュー（`reviewer`）だけに使う。ランナーは自動で `delegated-worker` Agent を使い、単体の OpenCode（既定 build）とは分離する。worker は commit / push / PR・worktree 変更・ユーザーへの質問・子への再委譲をしない。旧 `--session-wide` / `--once` は廃止した（指定されても無視して通常どおり委譲する）。常時有効はスキルと `~/.codex/AGENTS.md` の指示で実現し、設定ファイル・環境変数・フックの状態は作らない。
 
-実行は Claude Code と共通のランナー `bash ~/.claude/skills/opencode/scripts/run.sh --dir /abs/path/to/project --title 'codex: 作業名'` に heredoc で自己完結した指示を渡す（Codex 専用の実行スクリプトは持たない）。委譲範囲のオプションはスキルが解釈し、ランナーには渡さない（ランナーの `--session` は OpenCode セッション再開用）。既定モデルは `opencode/deepseek-v4.1-flash-free`。利用上限（レート制限・quota）のときだけ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` → `console-anthropic/claude-sonnet-5-5#medium`（Anthropic API の従量課金）の順に自動切替し、Sonnet まで上限なら非0で停止する。認証・地域拒否・権限拒否・通信・モデル不存在・context length などは切り替えず停止する。ユーザーが `--model` を明示した場合は自動切替しない。`--auto` は使わない。
+実行は Claude Code と共通のランナー `bash ~/.claude/skills/opencode/scripts/run.sh --dir /abs/path/to/project --title 'codex: 作業名'` に heredoc で自己完結した指示を渡す（Codex 専用の実行スクリプトは持たない）。ランナーの `--session` は同じ worker タスクの OpenCode セッション再開用。既定モデルは `opencode/deepseek-v4.1-flash-free`。利用上限（レート制限・quota）のときだけ `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` → `console-anthropic/claude-sonnet-5-5#medium`（Anthropic API の従量課金）の順に自動切替し、Sonnet まで上限なら非0で停止する。認証・地域拒否・権限拒否・通信・モデル不存在・context length などは切り替えず停止する。Sonnet まで上限、または OpenCode が使えないときは Codex が実装を肩代わりせず、ユーザーに判断を仰ぐ。ユーザーが `--model` を明示した場合は自動切替しない。`--auto` は使わない。
 
 Go の利用上限後に従量残高を消費しないため、利用者は Console で Use balance を無効にしておく（Go サブスク枠内に留める前提。設定や認証は読まず変更しない。権限付与ではない）。
 
-Codex の sandbox・承認・フックは OpenCode 内のツールに引き継がれないため、必要な制約は委譲プロンプトに書く。Codex は `git diff` でレビューし、追加の修正は `--session` で再依頼する。Codex 本体のモデル設定は変更しない。配布は `nix/home.nix` の `.codex/skills/opencode` リンクで行い、`home-manager switch`（ユーザーが実行）後に新しいチャットでスキル一覧を再読み込みする。
+Codex の sandbox・承認・フックは OpenCode 内のツールに引き継がれないため、必要な制約は委譲プロンプトに書く。Codex は `git diff` でレビューし、OpenCode の報告にかかわらず検証コマンドを自分で実行し直し、追加の修正は `--session` で再依頼する。Codex 本体のモデル設定は変更しない。配布は `nix/home.nix` の `.codex/skills/opencode` リンクで行い、`home-manager switch`（ユーザーが実行）後に新しいチャットでスキル一覧を再読み込みする。
 
 スキルは `$名前` で明示起動できる。PRは、作業が完了して検証が通ったときのほか、文中の `$pr`（Codex と同じく直前の文字は問わず、直後が英数字・`_` `:` `-` 以外のとき。`$prでPRを作って` も起動し、`$prune` は対象外）、または前後の空白を除いた依頼文の先頭語が `/pr`・旧 `/prompts:pr` の場合に起動する。説明文中の `/pr` だけでは起動しない。自然言語の「PRを出して」でも、検証が済んだ作業なら完了時と同じ手順を実行する。旧custom promptは非推奨なので、新しい入口にはスキルを使う。[公式Skills](https://learn.chatgpt.com/docs/build-skills)、[公式Custom Prompts](https://learn.chatgpt.com/docs/custom-prompts)
 

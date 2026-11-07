@@ -1,6 +1,6 @@
 # claude-notify（送信側）
 
-Claude Code / Grok CLI の Stop / Notification フックから iPhone へ Web Push するための送信スクリプト。OpenCode からは送らない（`opencode/cli.json` の `attention.notifications: false` と無効化したプラグイン）。呼び出し側・新PCでのセットアップ手順は [`.claude/README.md`](../.claude/README.md) を正本とする。受信側 PWA は別リポジトリ `claude-notify-mobile`（Vercel配信）。
+Claude Code の Stop / Notification フックから iPhone へ Web Push するための送信スクリプト。Grok CLI 用の分岐はフック（`notify.sh`）に残しているが Grok は休止中。OpenCode・Codex からは送らない（`opencode/cli.json` の `attention.notifications: false` と無効化したプラグイン）。呼び出し側・新PCでのセットアップ手順は [`.claude/README.md`](../.claude/README.md) を正本とする。受信側 PWA は別リポジトリ `claude-notify-mobile`（Vercel配信）。
 
 ## ファイル構成
 

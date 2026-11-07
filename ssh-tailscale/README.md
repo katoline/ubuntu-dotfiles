@@ -87,7 +87,7 @@ Tailscale の画面に Ubuntu が見えないときは、アカウントが違�
 9. 「Are you sure you want to continue connecting?」や指紋（fingerprint）の確認が出たら **Continue / Accept / 信頼**
 10. パスワードを求められたら、もう一度 Ubuntu のログインパスワード
 
-黒い画面にプロンプトが出れば成功。SSH では自動で tmux に入る。アプリを閉じても PC 側の `grok` は動き続け、入り直すと同じ画面に戻る（詳細は [`../tmux/README.md`](../tmux/README.md)）。
+黒い画面にプロンプトが出れば成功。SSH では自動で tmux に入る。アプリを閉じても PC 側の `claude` などは動き続け、入り直すと同じ画面に戻る（詳細は [`../tmux/README.md`](../tmux/README.md)）。
 
 ### つながらないときに Termius で見ること
 

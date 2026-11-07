@@ -12,7 +12,7 @@ metadata:
 ## 前提
 
 - このSkillは、作業が完了して検証が通ったとき、`/pr` Command本文から呼び出されたとき、またはユーザー発言の先頭トークンが `@pr` のときに使う。Command本文を受け取ったこと自体が明示起動の証拠であり、ユーザー発言に `/pr` と書かれているか・UI上のCommand名が見えるかを追加確認しない。先頭の `@pr` はMarkdownのコード表記・引用符で囲まれていても同じトークンとして扱う。いずれの場合も再確認・拒否せず、PR作成または具体的な失敗理由の報告まで手順を実行する。本文中で `/pr` や `@pr` に言及しただけの場合や、使い方・設定の説明依頼では実行しない。作業が完了して検証が通っていれば、共通指示に従って同じ手順を実行してよい。
-- OpenCodeではClaude Code / Grokのフックは動作しない。単体の `build` / `plan` / `pr` では `plugins/shared-harness.js` が共通 `pr-mode.sh` の判定を permission に反映する。既定ブランチ（main / master / origin/HEAD）への commit・push は拒否される。OpenCode の `pr-request` は `PR_MODE_REQUEST_SCOPE=git` で呼ばれ、main 時点と同じく既定ブランチ以外の自動承認条件を満たす単一コマンドだけが確認なしで通る。`home-manager switch`・`apt install`・`git reset --hard` 等の設定 ask は残り、PR のマージも allow しない（Claude Code だけがマージ以外をすべて allow する）。plugin を読み込めない場合は `opencode.json` の ask とOpenCode標準の確認に従い、確認を迂回しない。
+- OpenCodeではClaude Codeのフックは動作しない。単体の `build` / `plan` / `pr` では `plugins/shared-harness.js` が共通 `pr-mode.sh` の判定を permission に反映する。既定ブランチ（main / master / origin/HEAD）への commit・push は拒否される。OpenCode の `pr-request` は `PR_MODE_REQUEST_SCOPE=git` で呼ばれ、main 時点と同じく既定ブランチ以外の自動承認条件を満たす単一コマンドだけが確認なしで通る。`home-manager switch`・`apt install`・`git reset --hard` 等の設定 ask は残り、PR のマージも allow しない（Claude Code だけがマージ以外をすべて allow する）。plugin を読み込めない場合は `opencode.json` の ask とOpenCode標準の確認に従い、確認を迂回しない。
 - `git commit`・`git push`・`gh pr create` はそれぞれ独立した単一コマンドで実行する。`&&`・`;`・`|`・改行で他のコマンドと連結しない。確認が表示されたらユーザーの判断を待つ。
 - permission確認を拒否されたコマンドは再試行しない。その操作を行わず、止まった段階と結果を報告する。
 - コミット・push・PR作成はメインセッションから直接行い、サブエージェントへ委譲しない。
