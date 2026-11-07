@@ -1,7 +1,7 @@
 ---
 description: upstreamとの差分や指定対象を背景の読み取り専用Agentでレビューする
 agent: code-review
-model: opencode-go/kimi-k2.7-code
+model: console-anthropic/claude-opus-5-5#medium
 subagent: true
 ---
 

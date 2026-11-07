@@ -100,7 +100,6 @@ def generate(repo, home, detach_only=False):
     files = [
         (repo / "codex/config.toml", home / ".codex/config.toml", "toml"),
         (repo / "codex/hooks.json", home / ".codex/hooks.json", "hooks"),
-        (repo / "devin/config.json", home / ".config/devin/config.json", "json"),
     ]
     pending = []
     current = side = None

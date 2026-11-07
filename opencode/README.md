@@ -1,6 +1,17 @@
 # OpenCode
 
-OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.config/opencode/` にリンクし、全プロジェクトで利用する。単体でも普通に使え、Claude Code / Codex の親セッションから呼ばれたときだけ軽量な `delegated-worker` Agent で動く。
+OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.config/opencode/` にリンクし、全プロジェクトで利用する。単体でも Claude Code と同じ使い勝手（メインが設計・レビュー、サブエージェントが実装、共通フックと完了チェック）で使え、Claude Code / Codex の親セッションから呼ばれたときだけ軽量な `delegated-worker` Agent で動く。
+
+## モデル構成（単体利用）
+
+| Agent | モデル | 役割 |
+|---|---|---|
+| `build` / `plan`（メイン） | `console-anthropic/claude-opus-5-5#medium`（Anthropic API 経由の Opus 5.5・medium） | 要件整理・設計・分解・指示・レビュー・最終判断 |
+| `general` / `explore`（サブエージェント） | `opencode/deepseek-v4.1-flash-free` | 実装・テスト・ドキュメント更新・調査（`explore` は読み取りだけ） |
+| 上限時の再実行先 | `opencode/deepseek-v4.1-flash` | サブエージェントが利用上限で失敗したときだけ、メインが `model` を指定して1回だけ再実行する |
+| `code-review` | `console-anthropic/claude-opus-5-5#medium` | `/code-review` と独立レビュー（読み取り専用） |
+
+OpenCode にはモデルの自動 fallback 機能が無いため、上限時の切替は `ai/opencode.md` の指示でメインが行う。`opencode.json` の `experimental.todo: true` で Todo ツールを有効にし、PDCA のチェックリストに使う。
 
 ## 通常起動と委譲 worker
 
@@ -14,29 +25,30 @@ OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.c
 | ファイル | 役割 |
 |---|---|
 | [`../ai/opencode.md`](../ai/opencode.md) | OpenCode 固有の差分のみ（共通ルールは [`../ai/core.md`](../ai/core.md)。両者を連結した `~/.config/opencode/AGENTS.md` を `ai/install.sh` が生成する） |
-| [`opencode.json`](opencode.json) | 既定 Agent（build）、Skill のソース、shared-harness plugin の登録、`delegated-worker` の定義、秘密ファイルの読み取り禁止、Git 書き込み・破壊的操作・恒久インストールの確認、`sudo` / force push の拒否、worktree cleanup の許可と `--force` の確認 |
+| [`opencode.json`](opencode.json) | 既定 Agent（build）、モデル構成（build / plan / general / explore）、`experimental.todo`、Skill のソース、shared-harness plugin の登録、`delegated-worker` の定義、秘密ファイルの読み取り禁止、Git 書き込み・破壊的操作・恒久インストールの確認、`sudo` / force push の拒否、worktree cleanup の許可と `--force` の確認 |
 | [`cli.json`](cli.json) | TUIのダークテーマ、権限確認、通知の無効化（`attention.notifications: false`）、usage-footerの明示登録 |
 | [`plugins/mobile-notify.js`](plugins/mobile-notify.js) | 通知の無効化用の互換入口（処理を持たない）。home-manager の既存リンクとプラグイン id を維持するために残す |
-| [`plugins/shared-harness.js`](plugins/shared-harness.js) | V2 plugin。permission evaluate（共通 guard / pr-mode）と検証ゲートを共通フックへ接続する（[`hooks/harness.sh`](hooks/harness.sh) 経由） |
-| [`hooks/harness.sh`](hooks/harness.sh) | 共通 `guard-destructive.sh` / `pr-mode.sh` / `verify-gate.sh` の薄い JSON adapter。実体パスから dotfiles ルートを解決する |
+| [`plugins/shared-harness.js`](plugins/shared-harness.js) | V2 plugin。permission evaluate（共通 guard / pr-mode）と検証ゲート・完了チェックを共通フックへ接続する（[`hooks/harness.sh`](hooks/harness.sh) 経由） |
+| [`hooks/harness.sh`](hooks/harness.sh) | 共通 `guard-destructive.sh` / `pr-mode.sh` / `verify-gate.sh` / `completion-gate.sh` の薄い JSON adapter。実体パスから dotfiles ルートを解決する |
 | [`plugins/usage-footer/`](plugins/usage-footer/) | チャット欄下にOpenCode Goの5時間利用率（ローカル履歴からの推定）とセッションコンテキスト使用率を表示 |
 | [`commands/`](commands/) | `/pr`・`/readme`・`/clean-branches`・`/nix-setup`・`/git-pull`・`/code-review` |
-| [`agents/code-review.md`](agents/code-review.md) | 差分を調査する、Kimi K2.7 Code使用の読み取り専用レビューAgent |
+| [`agents/code-review.md`](agents/code-review.md) | 差分を調査する、メインと同じ Opus 5.5（medium）使用の読み取り専用レビューAgent |
 | [`agents/pr.md`](agents/pr.md) | `/pr` 専用Agent。固定 allow を持たず global の ask を継承し、既定ブランチ以外の自動許可は plugin が共通 `pr-mode.sh` の条件だけを反映する |
-| [`skills/pr/SKILL.md`](skills/pr/SKILL.md) | OpenCode用の `/pr` 手順。Claude/Grokフックの代わりにOpenCodeの権限確認を利用 |
+| [`skills/pr/SKILL.md`](skills/pr/SKILL.md) | OpenCode用の `/pr` 手順。Claude Codeのフックの代わりにOpenCodeの権限確認を利用 |
 | [`setup.sh`](setup.sh) | 公式インストーラーによるOpenCode CLI導入（冪等） |
 
-## Claude Code / Codex / Grokとの共有
+## Claude Code / Codexとの共有
 
 - 全プロジェクト共通の指示は `~/.config/opencode/AGENTS.md`。実体は [`ai/core.md`](../ai/README.md)（全CLI共通）＋ `ai/opencode.md`（OpenCode固有の差分）で、`ai/install.sh` が連結生成する（手で編集しない）。**このファイルを消さないこと**：V2 は `AGENTS.md` のみを読み、`CLAUDE.md` へのフォールバックは無いため、消すと共通ルールとOpenCode固有の差分が両方読まれなくなる。`opencode.json` の `instructions` はファイル・glob・URL を解決できるが、`ai/` を列挙すると `AGENTS.md` と二重読みになるため列挙しない（[V2の指示](https://opencode.ai/v2/docs/instructions/)・[V1からの移行](https://opencode.ai/v2/docs/migrate-v1/)）。
 - OpenCodeは `~/.claude/skills/` も互換ソースとして検索するため、`readme`・`clean-branches`・`nix-setup`・`git-pull` Skillsは既存定義を共有する。`pr` は明示した `opencode/skills` ソースから読み、Claude Code版のフック手順と重ならないようOpenCode用のpermission手順を使う。
 - `~/.claude/skills/opencode`（Claude CodeからOpenCodeを起動するSkill）は共有しない。OpenCodeが互換ソース経由で読み込んで入れ子起動しないよう、`opencode.json` で `skill` の `opencode` を deny している。`codex` の deny は削除済みのClaude用Skillを将来復活させた場合の入れ子起動防止として残す。
-- Claude CodeのHooks、settings.json、モデル振り分けはOpenCodeでは動かないが、単体 `build` / `plan` / `pr` は `plugins/shared-harness.js` が `hooks/harness.sh` 経由で共通の `guard-destructive.sh`・`pr-mode.sh`・`verify-gate.sh` を V2 plugin API で使う。削除 roots・Git 判定・検証分類はOpenCode側に複写しない。plugin/adapter が読めない・健全性確認に失敗した場合は setup を失敗させ、`opencode.json` の ask を安全網として残す（動的 guard が無い状態で危険操作を通さない）。
+- Claude CodeのHooks、settings.json、モデル振り分けはOpenCodeでは動かないが、単体 `build` / `plan` / `pr` は `plugins/shared-harness.js` が `hooks/harness.sh` 経由で共通の `guard-destructive.sh`・`pr-mode.sh`・`verify-gate.sh`・`completion-gate.sh` を V2 plugin API で使う。削除 roots・Git 判定・検証分類はOpenCode側に複写しない。plugin/adapter が読めない・健全性確認に失敗した場合は setup を失敗させ、`opencode.json` の ask を安全網として残す（動的 guard が無い状態で危険操作を通さない）。
 - Git の許可判定は `/pr` の起動状態に依存しない。permission 評価では共通 `guard-destructive.sh` と `pr-mode.sh` の PreToolUse（`pr-pre`）を呼び、deny / ask をそのまま反映する。どちらも決定を返さず、フル入力の単一コマンド・メインセッション・設定が ask のときだけ `pr-request` を呼び、allow が返ればそれを反映する。既定ブランチへの commit / push は常に deny、force push・削除・`--no-verify` は拒否する。`pr-request` は `PR_MODE_REQUEST_SCOPE=git` で呼ばれ、main 時点と同じく git の自動承認対象だけを allow する。`home-manager switch`・`apt install`・`git reset --hard` 等の設定 ask は残り、PR のマージも allow しない（Claude Code だけがマージ以外をすべて allow する）。`session.get` の失敗は拒否し、`session.context` は検証ゲートの turn 管理だけに使う（Git の許可判定は会話に依存しない）。worker と通常 subagent の Git 書き込みは `agent_id` 付きで拒否する。
 - 検証ゲートは V2 に同期 Stop が無いため、TUI の実行成功イベント後に `session.synthetic({delivery:'steer',resume:true})` で実 user のターンごとに最大 1 回だけ再開する補助。終了判定は session ごとの job にし、event stream は started / interrupted の世代更新を待たない。中断・失敗・新しい実 user・他 location・旧 generation・plugin 終了後の旧 job では再開しない。再開後も未検証なら共通 `verify-gate.sh` の pending を消さず、`resume:false` の警告 synthetic を 1 回だけ inbox に残す（即時の会話表示・取り込みは native UI 依存）。次の実 user で改めて 1 回促す（`verify-stop` は常に `stop_hook_active:false`）。`opencode run` の CLI 終了とイベント後再開の race は TUI と異なり保証しない。通常 subagent の編集は `parentID` を辿って親 main に集約し、`delegated-worker` は終了ゲート対象外。
+- 完了チェック（`completion-gate.sh`）は検証ゲートと同じ集約先・namespace で接続する。新しい実 user で `complete-prompt`、編集・shell の後に `complete-post`、終了時は `verify-stop` が block も警告も返さないときだけ `complete-stop` を呼ぶ（検証待ちのターンは検証ゲートを優先し、完了チェックの状態を消費しない）。block なら検証ゲートと同じ synthetic で再開し、上限は Claude Code と同じく completion-gate 側の同ターン最大3回。`delegated-worker` は対象外。
 - `verify-gate.sh` は同じ Git common-dir の worktree も同じ dotfiles として分類するが、検証待ちは編集した worktree ごとに保持し、同じ worktree の直接形の成功だけで解除する。対象は repo root の `bash .claude/tests/run.sh`、`.claude` の `bash tests/run.sh`、絶対パスの `bash <worktree>/.claude/tests/run.sh`、repo root の `nix eval --raw .#homeConfigurations…` だけ。cd・複合コマンド・別 flake の明示は未対応で pending のまま残る（Stop の説明に実際に検証すべき worktree を出す）。
 - `/pr` Command本文の受信、またはユーザー発言先頭の独立した `@pr` を明示起動として扱い、SkillツールでID `pr` を読み込んで子セッションを作らず実行する。通常の `gh pr create`・`gh pr new`・`gh pr edit` は設定上 ask のままで、専用Agentにも固定 allow を置かない。既定ブランチ以外の commit・push・PR作成/更新は `/pr` の起動有無にかかわらず、共通 `pr-mode.sh` が自動承認対象と判定した単一コマンドを plugin の `pr-request` が allow に反映する。plugin を読み込めない・健全性確認に失敗した場合は setup が失敗し、global の ask がそのまま残る。既定ブランチ宛・force push・削除系は拒否する。確認なしで通るのは git の自動承認対象の単一コマンドだけで、それ以外の設定 ask と PR のマージは残る（Claude Code だけがマージ以外をすべて allow する）。この許可範囲は単体（build）用で、`delegated-worker` は commit / push / PR を permission で拒否する。親 Claude Code / Codex の `/opencode`・`$opencode` は、親側の `/pr` と子の worker を混同しない。
-- OpenCode からは claude-notify の通知を送信しない。`cli.json` の `attention.notifications` を `false` にし、`plugins/mobile-notify.js` は無効化した互換入口として残すだけで、イベント購読・送信プロセス起動を行わない。Claude/Grok と同じ `~/.claude/claude-notify.json`・送信スクリプト・PWA は OpenCode からは使わない（Claude/Grok 側の通知は変更しない）。
+- OpenCode からは claude-notify の通知を送信しない。`cli.json` の `attention.notifications` を `false` にし、`plugins/mobile-notify.js` は無効化した互換入口として残すだけで、イベント購読・送信プロセス起動を行わない。Claude Code と同じ `~/.claude/claude-notify.json`・送信スクリプト・PWA は OpenCode からは使わない（Claude Code 側の通知は変更しない）。
 - `plugins/usage-footer/` はTUIの `prompt.footer` にGo 5時間枠の推定値と現在セッションのコンテキスト使用率を表示する。Goの5時間枠はモデル別で、TUI向けの正確なアカウント使用量APIが公開されていないため、Goの標準プラン上限とこのOpenCodeが持つ直近5時間のセッション履歴・コストから推定する。別端末やOpenCode以外のクライアントの使用量、Go Plusの上限は含まれない。履歴を持たないモデルでは `--` を表示する。
 - usage-footerは `cli.json` の `plugins` に `./plugins/usage-footer` と明示登録する。相対パスは `cli.json` のあるディレクトリが基準で、既存のhome-managerリンク先の `tui.ts` から `tui.tsx` を読む。[公式CLIプラグイン仕様](https://opencode.ai/v2/docs/cli/plugins)と実機v2.0.22にはディレクトリの自動探索もあるが、登録を設定に明示する。実機のローダーはローカルの `tui` 入口を解決し、`@opencode/plugin/tui`・`solid-js`・OpenTUIを実行時に共有するため、追加の `package.json` や依存インストールは不要。設定の反映はTUIを起動し直す。読み込み経路は公式仕様とバイナリ内の実装で確認済みだが、表示は未確認（[CLIプラグインの作成](https://opencode.ai/v2/docs/build/plugins/cli/)）。
 - 無効化の反映にはバックグラウンドサービスの再読み込み（`opencode service restart`）が必要で、実行中セッションは切断される。
@@ -46,7 +58,7 @@ OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.c
 
 - Claude Code は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md)、Codex は [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md) から共有ランナー（`.claude/skills/opencode/scripts/run.sh`）を呼ぶ。ランナーは新規・`--session` 再開・利用上限時の fallback のすべてで `--agent delegated-worker` を付ける
 - 親は必要な Skill を自分で読み、委譲指示に関連する制約だけを含める。親の会話全文や全 Skill を子へコピーしない
-- fallback（DeepSeek V4.1 Flash Free → GLM 5.3 Flash Free → Go → Sonnet 5.5。Sonnet は Anthropic API の従量課金）は共有ランナー、`--session-wide` / `--once` は Codex の `$opencode` の機能で、委譲時にだけ働く（Claude Code の `/opencode` は常時有効でオプションなし）。単体起動（`build`）には自動 fallback や scope オプションを追加していない
+- fallback（DeepSeek V4.1 Flash Free → GLM 5.3 Flash Free → Go → Sonnet 5.5。Sonnet は Anthropic API の従量課金）は共有ランナーの機能で、委譲時にだけ働く。Claude Code の `/opencode`・Codex の `$opencode` はどちらもメインセッションで常時有効でオプションなし（旧 `--session-wide` / `--once` は廃止）。単体起動（`build`）の上限時の切替は上の「モデル構成」のとおりメインが指示で行う
 - `delegated-worker` はユーザーへの質問・子への再委譲・Skill の読み込み・Code Mode（内蔵 session / worktree 管理・MCP）・Git の書き込み・worktree の変更を持たない。外部連携が要る調査は親が行い、結果だけを渡す
 
 ## インストール・認証
@@ -57,9 +69,9 @@ OpenCode V2のグローバル設定。設定ファイルはhome-managerで `~/.c
 bash ~/Dev/kaishi/ubuntu-dotfiles/opencode/setup.sh
 ```
 
-設定リンクはユーザーが `home-manager switch --flake ~/Dev/kaishi/ubuntu-dotfiles#ubuntu` で反映する。xAI/Grokをモデルとして使う場合はOpenCode内で `/connect` からxAIアカウントを接続し、`/models` でモデルを選ぶ。認証情報はOpenCode自身のデータ領域に保存し、dotfilesには含めない。
+設定リンクはユーザーが `home-manager switch --flake ~/Dev/kaishi/ubuntu-dotfiles#ubuntu` で反映する。メイン・`code-review` が使う Anthropic API（`console-anthropic`）と、サブエージェントが使う OpenCode Zen（`opencode/…`）は OpenCode 内の `/connect` で接続する。認証情報はOpenCode自身のデータ領域に保存し、dotfilesには含めない。
 
-OpenCode V2の設定仕様に合わせ、Claude/Grokと共通化できないフックは移植せず、permission確認を安全境界として使う。OpenCodeの設定詳細は [公式ドキュメント](https://opencode.ai/v2/docs/) を参照。
+OpenCode V2の設定仕様に合わせ、Claude Codeと共通化できないフックは移植せず、permission確認を安全境界として使う。OpenCodeの設定詳細は [公式ドキュメント](https://opencode.ai/v2/docs/) を参照。
 
 ## 日本語表示の範囲
 
@@ -76,12 +88,12 @@ Anthropic公開リポジトリの [`plugins/code-review`](https://github.com/ant
 
 ### OpenCodeでの再現
 
-- `/code-review` Commandは `subagent: true` で背景実行し、専用の `code-review` Agentへ委譲する。Command側にもモデルIDを明示し、OpenCode V2で確認したCommand／Agentの現行仕様を使用している。
+- `/code-review` Commandは `subagent: true` で背景実行し、専用の `code-review` Agentへ委譲する。Command側にもAgentと同じモデルID（`console-anthropic/claude-opus-5-5#medium`）を明示し、OpenCode V2で確認したCommand／Agentの現行仕様を使用している。
 - 引数なしではupstream以降のブランチ差分と `HEAD` からの作業ツリー差分（staged / unstaged）を調べる。ファイル、ブランチ、`base...head`、PR番号／URLも対象にでき、未追跡ファイルも一覧から対象に含める。
 - レビューAgentには全操作を既定denyし、ファイル変更・書込み・別Agent起動を禁止したうえで、読み取り・検索と限定したGit / `gh pr diff` / `gh pr view` のみ許可する。秘密ファイルは対象から除外する。
 - 変更によって導入されたと確認でき、差分とコードで根拠を示せる重大なバグ・回帰・適用可能なルール違反だけを報告する。既存問題、推測、好み、細かな指摘、lintだけで検出する問題、テスト不足だけの指摘は除外する。候補を個別に再確認し、重複を除く。公式内蔵ローカル版が公開資料で明記する単一背景Subagentの体験に合わせ、プラグイン版の複数Agent構成や80点閾値は導入しない。
 - `low` / `medium` / `high` / `max` と `--max-findings` はレビュー指示として扱う。OpenCodeにはClaude Codeのeffort値の継承・記憶や共通effort APIがないため、モデルに調査範囲を伝える方式であり、数値スコア閾値ではない。
-- レビュー出力と問題なしの明示は日本語。モデル候補は現在の `opencode models` と実リクエストで確認した。DeepSeek V4 Proはリージョン設定またはOpenCodeアカウント残高により利用できなかったため、提示された比較表でPrecisionが最も高いKimi K2.7 Code（F1 43.1 / Recall 37.9% / Precision 50.0%、`opencode-go/kimi-k2.7-code`）を、現在のOpenCode Go経由で利用できる候補として選び、特に誤検知を抑える方針を優先する。
+- レビュー出力と問題なしの明示は日本語。モデルはメインと同じ Opus 5.5（`console-anthropic/claude-opus-5-5#medium`）にし、メインと同等の理解力で差分を検証する方針にした（以前は OpenCode Go の Kimi K2.7 Code を使っていた）。独立性はモデルを分けることではなく、差分と要件だけを渡す新しいコンテキストで確保する（Codex の `reviewer` も同じ考え方）。
 
 ### 再現しない機能・制約
 

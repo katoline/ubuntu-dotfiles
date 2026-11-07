@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude の事故防止・dotfiles 検証ゲートを Codex のイベントへ接続する。
+# Claude の事故防止・dotfiles 検証ゲート・完了チェックゲートを Codex のイベントへ接続する。
 # ask は承認情報にかかわらず拒否し、ユーザーの手動実行へ導く。deny は常に維持する。
 exec 2>/dev/null
 command -v jq >/dev/null 2>&1 || exit 0
@@ -19,7 +19,10 @@ event="$1" session="$2" tool="$3" cwd="$4" cmd="$5"
 normalized=$(printf '%s' "$input" | jq -c --arg s "codex-$session" --arg c "$cmd" '
   .session_id=$s | .tool_input=(.tool_input // {}) | .tool_input.command=$c') || exit 0
 gate() { printf '%s' "$1" | bash "$ROOT/.claude/hooks/verify-gate.sh"; }
+# 完了チェックは状態の記録だけ。PostToolUse・UserPromptSubmit の出力は Codex の文脈に入るため捨てる。
+complete() { printf '%s' "$1" | bash "$ROOT/.claude/hooks/completion-gate.sh" >/dev/null; }
 case "$event" in
+  UserPromptSubmit) complete "$normalized" ;;
   PreToolUse)
     case "$tool" in Bash | shell | exec_command) ;; *) exit 0 ;; esac
     normalized=$(printf '%s' "$normalized" | jq -c '.tool_name="Bash"')
@@ -36,6 +39,10 @@ $guidance" \
           '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}' ;;
     esac ;;
   PostToolUse)
+    # OpenCode ランナーの起動は継続中・失敗でも記録する（委譲先の編集はフックに見えず、実行中は Stop を抑止したい）。
+    case "$tool" in
+      Bash | shell | exec_command) complete "$(printf '%s' "$normalized" | jq -c '.tool_name="Bash"')" ;;
+    esac
     # 結果が継続中・失敗の場合は、成功出力の断片で検証済みにしない。
     printf '%s' "$input" | jq -e '
       .tool_response | (if type == "string" then (fromjson? // .) else . end)
@@ -51,8 +58,11 @@ $guidance" \
           case "$path" in /*) ;; *) path="$cwd/$path" ;; esac
           edit=$(printf '%s' "$normalized" | jq -c --arg f "$path" '.tool_name="Edit" | .tool_input={file_path:$f}')
           gate "$edit"
+          complete "$edit"
         done < <(printf '%s\n' "$cmd" | sed -nE 's/^\*\*\* (Add File|Update File|Delete File|Move to): (.*)$/\2/p') ;;
-      Edit | Write | NotebookEdit) gate "$normalized" ;;
+      Edit | Write | NotebookEdit)
+        gate "$normalized"
+        complete "$normalized" ;;
       Bash | shell | exec_command)
         normalized=$(printf '%s' "$normalized" | jq -c '
           .tool_name="Bash" | .tool_response={stdout:(.tool_response |
@@ -61,6 +71,10 @@ $guidance" \
             else "" end)}') || exit 0
         gate "$normalized" ;;
     esac ;;
-  Stop) gate "$normalized" ;;
+  Stop)
+    # Stop の出力は JSON 1 個だけ。検証ゲートが何か返したら、完了チェックは状態を残したまま次の Stop に回す。
+    result=$(gate "$normalized")
+    [ -n "$result" ] || result=$(printf '%s' "$normalized" | bash "$ROOT/.claude/hooks/completion-gate.sh")
+    [ -z "$result" ] || printf '%s\n' "$result" ;;
 esac
 exit 0

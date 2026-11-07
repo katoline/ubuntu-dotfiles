@@ -2,7 +2,7 @@
 
 ## 概要
 
-`~/.claude` の実体。ここを編集するとコミット前でも全プロジェクトの Claude Code / Grok に即反映される（構成と注意点はリポジトリ直下の `AGENTS.md` を参照）。Grok は `compat.claude.hooks`（デフォルト有効）で同じ `settings.json` の hooks を読む。
+`~/.claude` の実体。ここを編集するとコミット前でも全プロジェクトの Claude Code に即反映される（構成と注意点はリポジトリ直下の `AGENTS.md` を参照）。共通フック（`pr-mode.sh`・`guard-destructive.sh`・`verify-gate.sh`・`completion-gate.sh`）は Codex（`codex/hooks/harness.sh`）と OpenCode（`opencode/plugins/shared-harness.js`）からも adapter 経由で使う。休止中の Grok（[`../archive/`](../archive/README.md)）は `compat.claude.hooks` で同じ `settings.json` の hooks を読む設計で、フック内の Grok 互換コードは残している。
 
 ## ファイル構成
 
@@ -10,11 +10,11 @@
 | :--- | :--- |
 | `settings.json` | Claude Code の設定（フック・言語・effortLevel・permissions など） |
 | （グローバル指示） | 実体はリポジトリの [`ai/`](../ai/README.md)。`ai/install.sh` が `~/.claude/CLAUDE.md` → `ai/core.md`（全CLI共通）、`~/.claude/rules/claude.md` → `ai/claude.md`（Claude Code 固有のモデル運用とフックの挙動）のリンクを張る。`.claude/setup.sh` の配布対象ではない |
-| `hooks/notify.sh` | Stop / Notification 時に iPhone へプッシュ通知するフック（送信本体は `claude-notify/send-push.mjs`）。Claude / Grok |
-| `hooks/pr-mode.sh` | 既定ブランチへの git commit / push を拒否し、マージ以外のツール利用を自動承認する。確認ダイアログは既定ブランチを base にする PR のマージだけ（Claude / Grok） |
+| `hooks/notify.sh` | Stop / Notification 時に iPhone へプッシュ通知するフック（送信本体は `claude-notify/send-push.mjs`）。Claude（Grok 互換の分岐も残す） |
+| `hooks/pr-mode.sh` | 既定ブランチへの git commit / push を拒否し、マージ以外のツール利用を自動承認する。確認ダイアログは既定ブランチを base にする PR のマージだけ（Claude。OpenCode も adapter 経由で共有、Grok 互換の分岐も残す） |
 | `hooks/guard-destructive.sh` | 回復不能な操作（ルート・ホーム直下の削除、破壊的git操作等）を機構的に止めるフック |
 | `hooks/verify-gate.sh` | dotfiles の検証対象ファイルを編集したセッションで、対応する検証コマンド（`bash .claude/tests/run.sh` / `nix eval`）が成功するまでターンを終えさせないフック。Stop は `stop_hook_active=false` なら block して block 済みマーカーを作り、`true` かつマーカーあり（自分の block の 2 回目）なら systemMessage で警告して記録を消す。`true` でもマーカーが無ければ他フックの block 由来なので block する。マーカーは検証対象の再編集で消え、もう一度だけ止める。block 後の再編集で再 block する挙動は Codex にも適用される |
-| `hooks/completion-gate.sh` | ファイルを変更したターンの Stop で「完了チェック（PDCA の Check）」を最大3回まで促し、要件ごとの根拠・検証・独立レビュー・付随作業の確認を報告させるフック。このセッションが起動した OpenCode（ランナーの起動形を検出して記録）が実行中のときだけ完了待ちとみなして促さない。既知の制約: 抑止は「このセッションが起動した（`opencode=1`）」と「同じリポジトリ（git common-dir が同じ）のどこかでランナーが動いている」の組み合わせで判定するため、自分のランナーが終わった後でも、同じリポジトリの別 worktree で別セッションのランナーが動いている間は抑止される |
+| `hooks/completion-gate.sh` | ファイルを変更したターンの Stop で「完了チェック（PDCA の Check）」を最大3回まで促し、要件ごとの根拠・検証・独立レビュー・付随作業の確認を報告させるフック。Codex（`codex/hooks/harness.sh`。Stop は verify-gate 優先）と OpenCode 単体（`shared-harness.js`）でも同じ判定が動く。このセッションが起動した OpenCode（ランナーの起動形を検出して記録）が実行中のときだけ完了待ちとみなして促さない。既知の制約: 抑止は「このセッションが起動した（`opencode=1`）」と「同じリポジトリ（git common-dir が同じ）のどこかでランナーが動いている」の組み合わせで判定するため、自分のランナーが終わった後でも、同じリポジトリの別 worktree で別セッションのランナーが動いている間は抑止される |
 | `hooks/validate-claude-config.sh` | `~/.claude` 配下の設定ファイル編集直後にJSON構文・シェル構文・frontmatterを検証するフック |
 | `hooks/lib/strip-shell.awk` | シェルコマンド文字列から引用符の中身とHEREDOC本文を除去する共通ライブラリ（pr-mode.sh・guard-destructive.shが利用） |
 | `hooks/lib/scan-secrets.sh` | コミットされる差分の追加行を既知のトークン形式で検査する（pr-mode.sh が commit を自動承認する直前に呼ぶ） |
@@ -26,10 +26,10 @@
 | `skills/clean-branches/SKILL.md` | `/clean-branches` スキル：ローカルブランチのうちデフォルトブランチ・使用中のブランチ以外を削除して整理（未マージは確認後のみ） |
 | `skills/nix-setup/SKILL.md` | `/nix-setup` スキル：新規プロジェクトの開発環境をNix devShell + direnvでセットアップ |
 | `skills/git-pull/SKILL.md` | `/git-pull` スキル：直下の各リポジトリを `main` に切り替えてfast-forward-onlyでpull（変更があるリポジトリはスキップ） |
-| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約・レビューする。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても OpenCode へ委譲する（`--session-wide` / `--once` は廃止。Codex の `$opencode` は従来どおりオプションなしは今回だけ・`--session-wide`・`--once`）。既定モデル `opencode/deepseek-v4.1-flash-free`、利用上限時は `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` → `console-anthropic/claude-sonnet-5-5#medium`（Anthropic API の従量課金）の順に自動切替し、Sonnet まで上限なら停止（`--model` 明示時は切替なし、`--auto` は使わない）。Go は Console の Use balance を無効にする前提。Claude Code 専用（OpenCode では `opencode.json` で deny）。Codex は `codex/skills/opencode/SKILL.md` から同じ `scripts/run.sh` を使う。ランナーは OpenCode を `--agent delegated-worker`（Skill / subagent / question / execute・Git 書き込み・PR・worktree 変更なし）で起動し、単体の build とは分離する |
+| `skills/opencode/SKILL.md` | `/opencode` スキル：Claude Code から OpenCode を非対話で起動して作業を任せ、結果を要約・レビューする。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても OpenCode へ委譲する（`--session-wide` / `--once` は廃止。Codex の `$opencode` も同じく常時有効）。既定モデル `opencode/deepseek-v4.1-flash-free`、利用上限時は `opencode/glm-5.3-flash-free` → `opencode-go/deepseek-v4.1-flash` → `console-anthropic/claude-sonnet-5-5#medium`（Anthropic API の従量課金）の順に自動切替し、Sonnet まで上限なら停止（`--model` 明示時は切替なし、`--auto` は使わない）。Go は Console の Use balance を無効にする前提。Claude Code 専用（OpenCode では `opencode.json` で deny）。Codex は `codex/skills/opencode/SKILL.md` から同じ `scripts/run.sh` を使う。ランナーは OpenCode を `--agent delegated-worker`（Skill / subagent / question / execute・Git 書き込み・PR・worktree 変更なし）で起動し、単体の build とは分離する |
 | `claude-notify.example.json` | iPhoneプッシュ通知（claude-notify）設定のテンプレート |
 | `setup.sh` | `.claude/` 配下（gitが管理するファイルのみ）を `~/.claude` へシンボリックリンクするスクリプト |
-| `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / completion-gate / validate-claude-config / Grok 互換 / Codex の `codex/hooks/guard.sh`）、OpenCode 委譲ランナーのモデル切替テスト（opencode-run）、OpenCode の単体 build / `delegated-worker` の実効 permission テスト（opencode-permissions）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
+| `tests/` | git-pull の一時リポジトリ統合テスト、フックのテーブル駆動テスト（pr-mode / guard-destructive / verify-gate / completion-gate / validate-claude-config / 休止中の Grok 互換 / Codex の `codex/hooks/guard.sh` と `harness.sh`）、OpenCode 委譲ランナーのモデル切替テスト（opencode-run）、OpenCode の単体 build / `delegated-worker` の実効 permission テスト（opencode-permissions）、共通指示の配布テスト（ai-install）。一括実行は `bash .claude/tests/run.sh`（配布対象外） |
 
 ## セットアップ（反映方法）
 
@@ -42,7 +42,7 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 ただし「リンク先の実体が更新される」ことと「実行中の LLM セッションが指示を読み直す」ことは別。グローバル指示はセッション開始時に読み込まれた版が使われ、変更は再起動か `/clear` まで反映されない。プロジェクトルートの `CLAUDE.md` だけは `/compact` でも読み直されるが、このリポジトリは `AGENTS.md` に集約しており `CLAUDE.md` は新設しない（`AGENTS.md` が compact で再読されるかは断定しない）。詳細は [memory](https://code.claude.com/docs/en/memory)。
 
 - **ファイルを追加したら再実行するだけ**でリンクされる（スクリプトの修正は不要）
-- `skills/` や `commands/` などのディレクトリを作れば、そのまま `~/.claude` 配下に反映され、Claude / Grok で使える
+- `skills/` や `commands/` などのディレクトリを作れば、そのまま `~/.claude` 配下に反映され、Claude Code で使える（OpenCode も `~/.claude/skills/` を互換ソースとして読む）
 - リポジトリから削除・除外されたファイルの切れたリンク（旧パスを指すものを含む）は、再実行時に自動で掃除される
 - `setup.sh`・`README.md`・`claude-notify.example.json`・`tests/`（フックのテスト。配布不要）・`claude-notify.json`・`settings.local.json`（秘密鍵・プロジェクト固有設定）・エディタの一時ファイルやバックアップ（`*.swp`・`*~`・`*.backup.*` 等）はリンク対象外
 - 既に正しいリンクが張られているファイルには触らない（冪等。inodeを変えないので `switch` 中にリンクが一瞬消える窓もできない）
@@ -60,8 +60,8 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 ## settings.json
 
 - `permissions.deny`：`~/.claude/claude-notify.json`・`~/.claude/history.jsonl` に加え、SSH秘密鍵・AWS認証情報・`gh` の hosts.yml・Docker設定・`.netrc`・GPG鍵・kubeconfig・`.npmrc`・主要な `.env` 変種（`.env.example` は除く。一覧は settings.json）などの秘密ファイルの読み取りと `sudo` の実行を禁止（詳細は settings.json）
-- `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` に加え、`apt` / `snap`・`npm install -g` 系・`pip install --user`・`pipx`・`uv tool install`・`cargo` / `gem` / `go install`・`nix profile` / `nix-env`・`home-manager` など、プロジェクト外へ恒久的な変更を及ぼすコマンドを実行前に必ず確認（詳細は settings.json）。Grok の always-approve でもシェルの ask ルールは効く
-- `hooks`：`PreToolUse`(Bash) で `hooks/pr-mode.sh` と `hooks/guard-destructive.sh`、`PermissionRequest`(*) で `hooks/pr-mode.sh`、`PostToolUse`(Edit|Write|NotebookEdit|write|search_replace) で `hooks/validate-claude-config.sh` と `hooks/verify-gate.sh` と `hooks/completion-gate.sh`、`PostToolUse`(Bash) で `hooks/verify-gate.sh` と `hooks/completion-gate.sh`、`UserPromptSubmit` で `hooks/completion-gate.sh`、`Stop` で `hooks/verify-gate.sh` と `hooks/completion-gate.sh`、`Stop` / `Notification`(matcher: `permission_prompt`) で `hooks/notify.sh`。Grok の matcher `Bash` は `run_terminal_command` にも当たる
+- `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` に加え、`apt` / `snap`・`npm install -g` 系・`pip install --user`・`pipx`・`uv tool install`・`cargo` / `gem` / `go install`・`nix profile` / `nix-env`・`home-manager` など、プロジェクト外へ恒久的な変更を及ぼすコマンドを実行前に必ず確認（詳細は settings.json）。（休止中の Grok でも always-approve でシェルの ask ルールが効く設計）
+- `hooks`：`PreToolUse`(Bash) で `hooks/pr-mode.sh` と `hooks/guard-destructive.sh`、`PermissionRequest`(*) で `hooks/pr-mode.sh`、`PostToolUse`(Edit|Write|NotebookEdit|write|search_replace) で `hooks/validate-claude-config.sh` と `hooks/verify-gate.sh` と `hooks/completion-gate.sh`、`PostToolUse`(Bash) で `hooks/verify-gate.sh` と `hooks/completion-gate.sh`、`UserPromptSubmit` で `hooks/completion-gate.sh`、`Stop` で `hooks/verify-gate.sh` と `hooks/completion-gate.sh`、`Stop` / `Notification`(matcher: `permission_prompt`) で `hooks/notify.sh`。休止中の Grok では matcher `Bash` が `run_terminal_command` にも当たる
   - `PreToolUse` の `hooks/pr-mode.sh`・`hooks/guard-destructive.sh` は、高負荷時の打ち切りを減らすため timeout を30秒とし、`onFailure: "block"` を付けている。**外さないこと**（外すと安全装置が壊れたとき＝起動不能・タイムアウト・想定外の exit コードのときに黙って素通りになる）。代償として、フックのファイルが消える・壊れると全 Bash が止まる
   - Orca（エージェント管理アプリ）が書き込んだフックと `statusLine`（コマンドに `orca` を含むもの）は外部ツール由来なので手で編集しない。`tests/run.sh` が「登録元が `bash $HOME/.claude/hooks/<実在するスクリプト>` か許可リストの外部ツールか」を検査し、知らない登録元が増えたら落ちる
 - `env.CLAUDE_CODE_SUBAGENT_MODEL`：`opus`（サブエージェントの既定モデル。振り分けは `ai/claude.md`）
@@ -76,14 +76,14 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
 
 ## Git操作の制限（既定ブランチ保護）
 
-方針は「既定ブランチ（`main` / `master` / `origin/HEAD` の指すブランチ）への commit・push は常に拒否し、それ以外の作業ブランチでの commit・push・PR の作成と更新は自動承認する。確認ダイアログを出すのは既定ブランチを base にする PR のマージだけ」。`/pr` は同じ手順を明示的に起動する入口で、許可判定は `/pr` を起動したかどうかに依存しない。判定の実体は `hooks/lib/git-write.sh` の1か所で、Claude / Grok / OpenCode の adapter / Codex が共有する。
+方針は「既定ブランチ（`main` / `master` / `origin/HEAD` の指すブランチ）への commit・push は常に拒否し、それ以外の作業ブランチでの commit・push・PR の作成と更新は自動承認する。確認ダイアログを出すのは既定ブランチを base にする PR のマージだけ」。`/pr` は同じ手順を明示的に起動する入口で、許可判定は `/pr` を起動したかどうかに依存しない。判定の実体は `hooks/lib/git-write.sh` の1か所で、Claude / OpenCode の adapter / Codex（と休止中の Grok 互換）が共有する。
 
 各層の役割：
 
 - `ai/core.md`（`~/.claude/CLAUDE.md`）：検証が通ったら作業ブランチで commit・push・PR 作成まで進めること、既定ブランチへは commit・push しないこと、PR のマージはユーザーの明示的な指示があるときだけ行い自分から提案しないことを指示する（Claude が試みること自体を抑止）
 - `skills/pr/SKILL.md`：手順（検証→現状把握→ブランチ準備→コミット分割→push と PR 作成→報告）と、自動承認を受けるための単一コマンドの条件
-- `settings.json` の `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` は設定上の ask（Grok が使う）。Claude では `hooks/pr-mode.sh` の `PermissionRequest` がマージ以外を allow に変える
-- `hooks/pr-mode.sh`：状態を持たず、コマンドと対象リポジトリの状態から毎回判定する（`PreToolUse`(Bash) の deny / Grok 用 ask と、`PermissionRequest`(*) の allow）
+- `settings.json` の `permissions.ask`：`git commit` / `git push` / `gh pr create` / `gh pr new` / `gh pr edit` / `gh pr merge` は設定上の ask（PermissionRequest の無い環境向け。休止中の Grok が使っていた）。Claude では `hooks/pr-mode.sh` の `PermissionRequest` がマージ以外を allow に変える
+- `hooks/pr-mode.sh`：状態を持たず、コマンドと対象リポジトリの状態から毎回判定する（`PreToolUse`(Bash) の deny / Grok 互換の ask と、`PermissionRequest`(*) の allow）
 
 判定：
 
@@ -93,7 +93,7 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/.claude/setup.sh
   - サブエージェントからの git 書き込み、force push、`--all` / `--mirror`、リモートブランチ削除、`--no-verify` の push、保護ブランチへの commit / push を deny する。push の宛先は refspec（`main` / `HEAD:main` / `feat:main` / `refs/heads/main` / `+main` 等）と、refspec 無し・`HEAD` 単独のときの現在ブランチで判定する
   - `--no-verify` / `-n` を含む commit、変数などで宛先を判定できない push、コミットされる差分の秘密情報（`hooks/lib/scan-secrets.sh`）も deny する。`--amend` を含む commit は何も返さない（確認なし）
   - 確認が必要な PR のマージ（既定ブランチ宛・base 判定不能の `gh pr merge`、`gh api` のマージ）は `PreToolUse` で ask を返す。既定ブランチ以外宛の `gh pr merge` は何も返さない（`PermissionRequest` が allow する）
-  - Grok は `PermissionRequest` を持たないため、自動承認条件を満たさない git 書き込みも `PreToolUse` で ask にする（always-approve でも確認になる）。stdin は snake_case / camelCase 両対応、ツール名は `Bash` と `run_terminal_command` を見る
+  - Grok（休止中。互換コードは残す）は `PermissionRequest` を持たないため、自動承認条件を満たさない git 書き込みも `PreToolUse` で ask にする（always-approve でも確認になる）。stdin は snake_case / camelCase 両対応、ツール名は `Bash` と `run_terminal_command` を見る
 - `PermissionRequest`(*)（Claude）：ツールの種類（Bash / Edit / Write / MCP 等）とコマンドの形（複合コマンドを含む）を問わず、次を除いて `behavior: allow` を返す（`PreToolUse` の allow では `permissions.ask` を上書きできないため、確認ダイアログの代替はここで行う）
   - force push、保護ブランチへの commit / push、`--no-verify` / `-n`、削除系 push、宛先を判定できない push は `behavior: deny`
   - PR のマージは何も返さない（= 確認ダイアログ）。`gh pr merge` は対象リポジトリの cwd で `gh pr view <同じ引数> --json baseRefName -q .baseRefName` を実行し、base が `main` / `master` / `origin/HEAD` の指すブランチなら確認、それ以外のブランチ宛なら allow する。base を取得できない・判定できない場合も確認（安全側）。`gh api` の `/pulls/N/merge` への PUT / GraphQL の `mergePullRequest` は常に確認
@@ -106,10 +106,10 @@ git 操作はメインセッションが直接実行する（サブエージェ�
 CLI ごとの違い：
 
 - Claude Code：`PreToolUse`（deny）と `PermissionRequest`（allow / マージだけ確認）の二段構え。マージ以外はツールの種類・コマンドの形を問わず確認なしで通る
-- Grok：`PermissionRequest` が無く `permission_mode = "always-approve"` なので、`PreToolUse` が自動承認条件を満たさない git 書き込みだけ ask にする。force push・保護ブランチ宛・削除系は deny
+- Grok（休止中）：`PermissionRequest` が無く `permission_mode = "always-approve"` なので、`PreToolUse` が自動承認条件を満たさない git 書き込みだけ ask にする。force push・保護ブランチ宛・削除系は deny
 - OpenCode：`opencode/plugins/shared-harness.js` が `opencode/hooks/harness.sh` 経由で同じ `pr-mode.sh` を呼び、`PreToolUse` の deny と `PermissionRequest` の allow を permission 評価に反映する。`pr-request` の allow はフル入力の単一コマンドだけに使い、複合コマンドで設定の ask を消さない。plugin を読み込めない場合は `opencode.json` の ask が残る。`delegated-worker` と通常 subagent は permission で git 書き込みを拒否する
 - Codex：`codex/hooks/guard.sh` が同じ `git-write.sh` を使う拒否専用フック。`PreToolUse` が ask を返せないため、PR のマージ・宛先を判定できない push・`--amend` / `--no-verify` / `-n` も deny する。既定ブランチ以外の commit・push・PR 作成/更新と、`guard-destructive.sh` が確認なしで通す操作は Codex の承認ポリシーに任せる
-- Devin：フックが無い。`devin/config.json` の `ask`（commit / push / `gh pr merge`）と `deny`（force push / `sudo`）、共通指示の「既定ブランチでは作業しない」で守る
+- Devin（休止中）：フックが無く、`archive/devin/config.json` の `ask` / `deny` と共通指示で守る設計だった（[`../archive/README.md`](../archive/README.md)）
 
 ## 破壊的コマンドのガード
 
@@ -154,7 +154,7 @@ CLI ごとの違い：
 - `*.awk` → `awk -f` による構文チェック（`hooks/lib/strip-shell.awk` は2フックが共有するため、壊すと両方が生文字列判定へ落ちる）
 - `skills/*/SKILL.md`・`agents/*.md` → frontmatter（1行目が `---` で始まる・`name:` がある・`description:` がある）
 
-失敗時は `exit 2` として stderr にエラーを返し、Claude にその場で修正させる（編集自体は巻き戻さない）。Grok の PostToolUse は観察専用（stdout は無視、stderr はスクロールバック）なので、Grok では自動修正まではしない。`~/.claude/projects`・`plans`・`sessions`・`backups` 配下の自動生成ファイルは対象外。stdin は snake_case / camelCase 両対応。
+失敗時は `exit 2` として stderr にエラーを返し、Claude にその場で修正させる（編集自体は巻き戻さない）。休止中の Grok の PostToolUse は観察専用（stdout は無視、stderr はスクロールバック）なので、Grok では自動修正まではしなかった。`~/.claude/projects`・`plans`・`sessions`・`backups` 配下の自動生成ファイルは対象外。stdin は snake_case / camelCase 両対応。
 
 ## 検証（テスト）
 
@@ -162,15 +162,15 @@ CLI ごとの違い：
 bash .claude/tests/run.sh
 ```
 
-各CLIの設定 JSON（`settings.json`・`opencode/*.json`・`codex/hooks.json`・`devin/config.json`）の構文、シェルスクリプト全体の `bash -n`（`hooks/`・`hooks/lib/`・`setup.sh`・`skills/*/scripts/`・`tests/`・`bootstrap.sh`・`ai/*.sh`・`codex/hooks/*.sh`・`opencode/setup.sh`）、`hooks/lib/*.awk` の構文、SKILL.md / agents の frontmatter（1行目の `---`・`name:`・`description:` に加え、閉じの `---` があること）、`settings.json` のフック・`statusLine` の登録元検査、およびフック（pr-mode / guard-destructive / verify-gate / completion-gate / validate-claude-config、加えて Grok 互換の入出力と Codex の `codex/hooks/guard.sh`）と共通指示の配布（ai-install）のテーブル駆動テストを実行する。guard のテストには、許可ルート内の通常の削除が確認なしで通ることを固定する不変条件セクション（IV01〜IV13）、`dev-roots` の各ルートを検査する DR1〜DR3、`dev-roots` の文法（行内コメント・空白・`~/` 以外の行）を作業コピーで検査する DC1〜DC4、同じコマンド内の代入の解決（解決できる形・deny になる形）を検査する V01〜V47、リンクされた git worktree のルートを許可する W01〜W03、deny の理由文が「何をするコマンドか」で始まることを検査する X01〜X21 が含まれる。`tests/` 自体は `setup.sh` の配布対象外（`~/.claude` にはリンクされない）。test-pr-mode.sh は `HOME` を一時ディレクトリに向けて実行するので、壊れた入力や `session_id` 欠落のケースを流してもフックの本物のログ `~/.claude/pr-mode.log` には書き込まない（run.sh がテスト前後の行数で検査する。E07 はそのログの文言が文字化けしていないことも見る）。`hooks/pr-mode.sh`・`hooks/guard-destructive.sh`・`hooks/verify-gate.sh`・`hooks/completion-gate.sh`・`hooks/validate-claude-config.sh`・`hooks/lib/` や `ai/`・`codex/`・`devin/`・`opencode/` の設定を変更したときは必ず実行して通す（`hooks/verify-gate.sh` が、通すまでターンを終えさせない）。作業コピーのフックを試すときは `HOOKS_DIR=/path/to/hooks bash .claude/tests/run.sh`。
+各CLIの設定 JSON（`settings.json`・`opencode/*.json`・`codex/hooks.json`）の構文、シェルスクリプト全体の `bash -n`（`hooks/`・`hooks/lib/`・`setup.sh`・`skills/*/scripts/`・`tests/`・`bootstrap.sh`・`ai/*.sh`・`codex/hooks/*.sh`・`opencode/setup.sh`）、`hooks/lib/*.awk` の構文、SKILL.md / agents の frontmatter（1行目の `---`・`name:`・`description:` に加え、閉じの `---` があること）、`settings.json` のフック・`statusLine` の登録元検査、およびフック（pr-mode / guard-destructive / verify-gate / completion-gate / validate-claude-config、加えて休止中の Grok 互換の入出力と Codex の `codex/hooks/guard.sh`・`harness.sh`、OpenCode の adapter・plugin）と共通指示の配布（ai-install）のテーブル駆動テストを実行する。guard のテストには、許可ルート内の通常の削除が確認なしで通ることを固定する不変条件セクション（IV01〜IV13）、`dev-roots` の各ルートを検査する DR1〜DR3、`dev-roots` の文法（行内コメント・空白・`~/` 以外の行）を作業コピーで検査する DC1〜DC4、同じコマンド内の代入の解決（解決できる形・deny になる形）を検査する V01〜V47、リンクされた git worktree のルートを許可する W01〜W03、deny の理由文が「何をするコマンドか」で始まることを検査する X01〜X21 が含まれる。`tests/` 自体は `setup.sh` の配布対象外（`~/.claude` にはリンクされない）。test-pr-mode.sh は `HOME` を一時ディレクトリに向けて実行するので、壊れた入力や `session_id` 欠落のケースを流してもフックの本物のログ `~/.claude/pr-mode.log` には書き込まない（run.sh がテスト前後の行数で検査する。E07 はそのログの文言が文字化けしていないことも見る）。`hooks/pr-mode.sh`・`hooks/guard-destructive.sh`・`hooks/verify-gate.sh`・`hooks/completion-gate.sh`・`hooks/validate-claude-config.sh`・`hooks/lib/` や `ai/`・`codex/`・`opencode/` の設定を変更したときは必ず実行して通す（`hooks/verify-gate.sh` が、通すまでターンを終えさせない）。作業コピーのフックを試すときは `HOOKS_DIR=/path/to/hooks bash .claude/tests/run.sh`。
 
 ## iPhoneプッシュ通知（claude-notify）
 
 `Stop`（タスク完了）/ `Notification`（許可待ち。matcher で `permission_prompt` のみ）イベントで `hooks/notify.sh` を実行し、Web Push で iPhone の PWA に通知する。委譲した OpenCode（`run.sh`）が同じプロジェクトで実行中の間は Stop 通知を送らない（同じリポジトリの worktree でも抑止。マーカー `~/.cache/claude-opencode-running/`）。送信本体（`claude-notify/send-push.mjs`）は**この dotfiles リポジトリに同梱**されており、notify.sh は自身の実体パスから場所を解決する（`CLAUDE_NOTIFY_REPO` などの環境変数は不要）。依存（`web-push`）は `home-manager switch` 時に home-manager の activation が `pnpm install --frozen-lockfile` で自動導入する。依存が入っていない PC では何もせず静かに終了する。受信側の PWA は別リポジトリ claude-notify-mobile（Vercel 配信）にあり、仕組みは同リポジトリの `docs/SETUP.md` を参照。
 
-**Grok CLI でも同じ通知が届く**。notify.sh が `GROK_HOOK_EVENT` で呼び出し元を判別し、応答完了（`reason == "end_turn"` の Stop）と許可待ち（`notificationType == "permission_prompt"` の Notification）だけをタイトル「(Grok)」付きで通知する。
+**Grok CLI 用の分岐も残している（Grok は休止中）**。notify.sh が `GROK_HOOK_EVENT` で呼び出し元を判別し、応答完了（`reason == "end_turn"` の Stop）と許可待ち（`notificationType == "permission_prompt"` の Notification）だけをタイトル「(Grok)」付きで通知する。Codex からは通知しない。
 
-**OpenCode V2 からは通知を送信しない**。`opencode/cli.json` の `attention.notifications` を `false` にし、`opencode/plugins/mobile-notify.js` は無効化した互換入口として残している（イベント購読・送信プロセス起動を行わない）。Claude/Grok の通知フック・claude-notify 送信機能・設定そのものは変更していない。
+**OpenCode V2 からは通知を送信しない**。`opencode/cli.json` の `attention.notifications` を `false` にし、`opencode/plugins/mobile-notify.js` は無効化した互換入口として残している（イベント購読・送信プロセス起動を行わない）。Claude Code の通知フック・claude-notify 送信機能・設定そのものは変更していない。
 
 新しい PC で使うには（`home-manager switch` 実行後）:
 

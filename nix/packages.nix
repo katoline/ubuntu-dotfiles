@@ -17,13 +17,13 @@
     docker # dockerクライアントCLI（Docker Engine本体はaptで導入する。nix/README.md参照）
     docker-compose
     supabase-cli
-    # 注: Claude Code / Grok / OpenCode CLIは意図的にNix管理外。
-    # 各公式インストーラーで導入する（Claude Code / Grok は自動更新、
+    # 注: Claude Code / OpenCode / Codex CLIは意図的にNix管理外。
+    # 各公式インストーラーで導入する（Claude Code / Codex は自動更新、
     # OpenCode は公式配布バイナリ。bootstrap.sh が担当）
 
     # ユーティリティ
     jq
-    tmux # iPhone SSH 切断後も grok 等を残す。zshrc が SSH 時だけ attach
+    tmux # iPhone SSH 切断後も claude / codex 等を残す。zshrc が SSH 時だけ attach
 
     # フォント。Powerlevel10kのアイコン・区切り記号の描画に必要なNerd Font。
     # Ubuntu標準ターミナルと同じ細い字幅を保つためUbuntuMonoのNerd Font版を使う

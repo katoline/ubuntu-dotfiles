@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VSCode 起動ラッパー。Grok / Claude Code の TUI で日本語 IME が
+# VSCode 起動ラッパー。Claude Code などの TUI で日本語 IME が
 # 「この」→「ｋこｎこのこの」になるのを防ぐ。
 #
 # 原因:

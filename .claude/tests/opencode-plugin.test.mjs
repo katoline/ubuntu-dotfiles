@@ -329,7 +329,13 @@ try {
   check("verify-first-nudge-resumes", () => {
     assert.equal(firstNudge.resume, true)
     assert.equal(firstNudge.delivery, "steer")
+    assert.equal(firstNudge.metadata?.kind, "verify-gate-resume")
   })
+  // verify が block の turn では complete-stop を呼ばない（completion の edited を消費しない）
+  const completionFile = path.join(process.env.TMPDIR, "claude-completion-gate-opencode-verify")
+  check("verify-block-keeps-completion-state", () =>
+    assert.match(fs.readFileSync(completionFile, "utf8"), /^edited=1$/m),
+  )
   h.push({ type: "session.execution.started", data: { sessionID: "verify" } })
   h.push({ type: "session.execution.succeeded", data: { sessionID: "verify" } })
   await waitFor(() => h.synthetics.filter((s) => s.sessionID === "verify").length >= 2)
@@ -393,8 +399,24 @@ try {
   const beforeVerified = h.synthetics.length
   h.push({ type: "session.execution.started", data: { sessionID: "verified" } })
   h.push({ type: "session.execution.succeeded", data: { sessionID: "verified" } })
+  await waitFor(() => h.synthetics.length > beforeVerified)
+  await sleep(150)
+  // 検証済みなら verify は促さず、completion-gate が 1 回だけ再開させる
+  const verifiedNudges = h.synthetics.slice(beforeVerified)
+  check("verified-run-completion-resumes-once", () => {
+    assert.equal(verifiedNudges.length, 1)
+    assert.equal(verifiedNudges[0].sessionID, "verified")
+    assert.equal(verifiedNudges[0].metadata?.kind, "completion-gate-resume")
+    assert.equal(verifiedNudges[0].resume, true)
+    assert.match(verifiedNudges[0].text, /completion-gate/)
+    assert.match(verifiedNudges[0].text, /確認結果を報告に書いてから終了してください。$/)
+  })
+  // 確認後の終了では、新しい編集が無ければ再び促さない
+  const afterCompletion = h.synthetics.length
+  h.push({ type: "session.execution.started", data: { sessionID: "verified" } })
+  h.push({ type: "session.execution.succeeded", data: { sessionID: "verified" } })
   await sleep(250)
-  check("verified-run-does-not-nudge", () => assert.equal(h.synthetics.length, beforeVerified))
+  check("completion-consumed-no-repeat", () => assert.equal(h.synthetics.length, afterCompletion))
 
   // 非 0 exit の stdout に成功文字があっても pending を消さない
   sessions.exitfail = rootInfo("exitfail")
@@ -580,10 +602,10 @@ try {
   h.ctx.session.get = realGet2
   check("unload-no-steer", () => assert.equal(h.synthetics.length, beforeUnload))
   check("cleanup-disposes", () => assert.ok(h.disposed() >= 4))
-  // 再開するのは verify-gate-resume だけで、警告・error は resume:false を明示する
+  // 再開するのは verify-gate-resume / completion-gate-resume だけで、警告・error は resume:false を明示する
   check("synthetic-resume-explicit", () => {
     for (const synthetic of h.synthetics) {
-      const resumeKind = synthetic.metadata?.kind === "verify-gate-resume"
+      const resumeKind = ["verify-gate-resume", "completion-gate-resume"].includes(synthetic.metadata?.kind)
       assert.equal(synthetic.resume, resumeKind, `kind=${synthetic.metadata?.kind}`)
     }
   })

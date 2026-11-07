@@ -112,6 +112,46 @@ out=$(op verify-post "$(jq -cn --arg s "$VS" '{session_id:$s,tool_name:"Bash",co
 report C04-run-empty "" "$out" ""
 report C05-cleared none "$(state_of "$VS")" "成功した run.sh で解除する"
 
+echo "# E. completion-gate（adapter の正規化と TMPDIR 隔離）"
+CS=opencode-cg-$$
+dec() { if [ -z "$1" ]; then echo none; else printf '%s' "$1" | jq -r '.decision // (if .systemMessage then "message" else "none" end)'; fi; }
+cstop() { op complete-stop "$(jq -cn --arg s "$1" --arg d "$REPO_DIR" '{session_id:$s,cwd:$d}')"; }
+out=$(op complete-post "$(jq -cn --arg s "$CS" --arg f "$REPO_DIR/opencode/hooks/harness.sh" --arg d "$REPO_DIR" '{session_id:$s,tool_name:"Edit",file_path:$f,cwd:$d}')")
+report E01-post-empty "" "$out" "記録だけ"
+r=absent
+[ -f "$TMPDIR/claude-completion-gate-$CS" ] && r=present
+report E02-state-in-tmpdir present "$r" "状態は隔離した TMPDIR に置く"
+out=$(cstop "$CS")
+report E03-stop-block block "$(dec "$out")" "$out"
+out=$(cstop "$CS")
+report E04-stop-again-none none "$(dec "$out")" "block で edited を消費する"
+CT=opencode-cg-tmp-$$
+out=$(op complete-post "$(jq -cn --arg s "$CT" --arg f "$TMPDIR/scratch.txt" '{session_id:$s,tool_name:"Write",file_path:$f}')")
+out=$(cstop "$CT")
+report E05-tmp-edit-none none "$(dec "$out")" "一時領域の編集は数えない"
+out=$(op complete-post "$(jq -cn --arg s "$CT" '{session_id:$s,tool_name:"Bash",command:"echo hi",cwd:"/tmp"}')")
+out=$(cstop "$CT")
+report E06-bash-none none "$(dec "$out")" "通常の Bash は数えない"
+CP=opencode-cg-prompt-$$
+for i in 1 2 3; do
+  op complete-post "$(jq -cn --arg s "$CP" --arg f "$REPO_DIR/README.md" '{session_id:$s,tool_name:"Edit",file_path:$f}')" >/dev/null
+  cstop "$CP" >/dev/null
+done
+op complete-post "$(jq -cn --arg s "$CP" --arg f "$REPO_DIR/README.md" '{session_id:$s,tool_name:"Edit",file_path:$f}')" >/dev/null
+out=$(cstop "$CP")
+report E07-cap-message message "$(dec "$out")" "同ターン 3 回で上限の systemMessage"
+op complete-prompt "$(jq -cn --arg s "$CP" '{session_id:$s}')" >/dev/null
+report E08-prompt-rc 0 "$?" ""
+op complete-post "$(jq -cn --arg s "$CP" --arg f "$REPO_DIR/README.md" '{session_id:$s,tool_name:"Edit",file_path:$f}')" >/dev/null
+out=$(cstop "$CP")
+report E09-prompt-resets-blocks block "$(dec "$out")" "新しいターンで再び促せる"
+printf '{"session_id":"../x"}' | bash "$ADAPTER" complete-stop >/dev/null 2>&1
+report E10-bad-session 1 "$?" "session id を検証する"
+printf '{"session_id":"opencode-cg"}' | bash "$ADAPTER" complete-post >/dev/null 2>&1
+report E11-post-no-tool 1 "$?" "tool_name が無い入力は失敗"
+printf '{' | bash "$ADAPTER" complete-prompt >/dev/null 2>&1
+report E12-broken-json 1 "$?" "壊れた JSON は失敗"
+
 echo "# D. 異常系（fail-closed）"
 printf '{}' | env PATH=/nonexistent /bin/bash "$ADAPTER" guard >/dev/null 2>&1
 report D01-no-tools 1 "$?" "jq / 共通スクリプトを解決できないときは成功扱いにしない"

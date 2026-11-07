@@ -20,11 +20,11 @@ VSCodeとCursorの設定の**実体**を置くディレクトリ。CursorはVSCo
 - リンクは書き込み可能。home-manager標準のstore管理だと設定が読み取り専用になり、エディタのUIから変更できなくなるため、`~/.zshrc` と同じ方式を採る
 - 拡張機能は「ファイル」ではなく「インストール状態」なのでリンクでは管理できない。`install-extensions.sh` がリストとの差分だけをインストールする。エディタ本体が未導入ならそのエディタをスキップし、次回のswitchで冪等にリトライされる
 - activation環境のPATHに依存しないよう、CLIは既知の絶対パス候補（deb版 `/usr/bin/code`・snap版 `/snap/bin/code`・`~/.local/bin/cursor` 等）を先に探し、見つからなければ `command -v` にフォールバックする
-- キーバインドはmacOS版dotfilesをLinux向けに差し替えている。カーソル移動は Vim 風の `alt+h/j/k/l`（左/下/上/右。Shift併用で選択）。Linuxのメニューニーモニック（`alt+h` がヘルプ等）と衝突するため、`settings.json` で `window.enableMenuBarMnemonics` と `window.customMenuBarAltFocus` を無効化している。チャット新規作成は Linux 既定の `ctrl+l` のまま（macOSの `cmd+l` 相当。Super+LはGNOMEの画面ロック）。統合ターミナルのコピー/ペーストは `ctrl+c` / `ctrl+v`（Linux既定の `ctrl+shift+c/v` を他アプリと揃える。`ctrl+c` は選択中のみコピーし、未選択時はSIGINT。選択中にコマンドを止める用途で `ctrl+shift+c` はコピーを外して SIGINT を送る）。Grok / Claude Code の TUI 改行は `shift+enter` を ESC+CR（`sendSequence`）に差し替える（統合ターミナル既定は Enter も Shift+Enter も CR のみで、TUI の「改行」と「送信」が区別できない）。移動キーは `textInputFocus && !terminalFocus` に限定し、Grok / Claude Code のTUIへキーを渡す
+- キーバインドはmacOS版dotfilesをLinux向けに差し替えている。カーソル移動は Vim 風の `alt+h/j/k/l`（左/下/上/右。Shift併用で選択）。Linuxのメニューニーモニック（`alt+h` がヘルプ等）と衝突するため、`settings.json` で `window.enableMenuBarMnemonics` と `window.customMenuBarAltFocus` を無効化している。チャット新規作成は Linux 既定の `ctrl+l` のまま（macOSの `cmd+l` 相当。Super+LはGNOMEの画面ロック）。統合ターミナルのコピー/ペーストは `ctrl+c` / `ctrl+v`（Linux既定の `ctrl+shift+c/v` を他アプリと揃える。`ctrl+c` は選択中のみコピーし、未選択時はSIGINT。選択中にコマンドを止める用途で `ctrl+shift+c` はコピーを外して SIGINT を送る）。Claude Code / Codex などの TUI 改行は `shift+enter` を ESC+CR（`sendSequence`）に差し替える（統合ターミナル既定は Enter も Shift+Enter も CR のみで、TUI の「改行」と「送信」が区別できない）。移動キーは `textInputFocus && !terminalFocus` に限定し、Claude Code などのTUIへキーを渡す
 - `settings.json` の `terminal.integrated.enableKittyKeyboardProtocol` は `false`。VS Code 1.109以降はKitty Keyboard Protocolが既定ONで、xterm.jsがpress/releaseを二重送信し、TUIで1キーが2文字入るため
 - `terminal.integrated.gpuAcceleration` は `off`。AMD（Lucienne）+ Wayland で統合ターミナルの描画欠け・ちらつきを避ける。`mouseWheelScrollSensitivity` は `3`（既定 1 より速いホイール）
 - ウィンドウボタンは GNOME と同じ左上・一段。`settings.json` の `window.titleBarStyle` / `menuStyle` / `menuBarVisibility` をセットで指定する。理由と注意は下記「ウィンドウボタン（左上・一段）」
-- 統合ターミナルの日本語IME（Grok / Claude Code で「この」が「ｋこｎこのこの」になる問題）は下記「統合ターミナルの日本語IME」。効く本体は ibus の `embed-preedit-text = false`（[`nix/keyboard.nix`](../nix/keyboard.nix)）。Kitty・local echo・起動ラッパーは補助
+- 統合ターミナルの日本語IME（Claude Code などのTUIで「この」が「ｋこｎこのこの」になる問題）は下記「統合ターミナルの日本語IME」。効く本体は ibus の `embed-preedit-text = false`（[`nix/keyboard.nix`](../nix/keyboard.nix)）。Kitty・local echo・起動ラッパーは補助
 
 ## ウィンドウボタン（左上・一段）
 
@@ -45,9 +45,9 @@ GNOME 全体の閉じる/最小化/最大化は [`nix/desktop.nix`](../nix/deskt
 - `menuBarVisibility: compact` は `titleBarStyle` が native かつ `menuStyle` が inherit / native だと無視されて classic（二段）に戻る
 - 反映にはエディタの**完全再起動**が必要（ウィンドウの Reload では足りない）。`home-manager switch` は不要
 
-## 統合ターミナルの日本語IME（Grok / Claude Code）
+## 統合ターミナルの日本語IME（Claude Code 等のTUI）
 
-VSCode の統合ターミナルで grok や Claude Code を開き、Mozc で「この」と打つと「ｋこｎこのこの」になる。変換中プレビュー（全角の `ｋ`・`ｎ`）と確定文字が両方 PTY へ送られ、画面を打ち直す TUI がそれを確定済みとして積むため。
+VSCode の統合ターミナルで Claude Code などのTUIを開き、Mozc で「この」と打つと「ｋこｎこのこの」になる。変換中プレビュー（全角の `ｋ`・`ｎ`）と確定文字が両方 PTY へ送られ、画面を打ち直す TUI がそれを確定済みとして積むため。
 
 **効いた対策**は ibus 側。[`nix/keyboard.nix`](../nix/keyboard.nix) が `desktop/ibus/general` の `embed-preedit-text` を `false` にする。変換中はカーソル付近のフローティング窓、確定した文字列だけが入力へ入る。即反映（ibus 再起動不要）。GUI から true に戻すと次回 `home-manager switch` で false に戻るので、true に戻さない。
 

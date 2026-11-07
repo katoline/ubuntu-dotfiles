@@ -7,7 +7,7 @@ allowed-tools:
 
 # OpenCode に作業を任せる
 
-> **Claude Code 専用。** OpenCode・Grok など他の CLI で読み込んだ場合は使わない（入れ子起動になる）。
+> **Claude Code 専用。** OpenCode・Codex など他の CLI で読み込んだ場合は使わない（入れ子起動になる）。
 
 OpenCode をサブエージェント代わりに使う。目的は Claude のトークン節約なので、手順は軽く回す。Claude Code の全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても委譲する（Claude のサブエージェントは独立レビューだけに使う。`~/.claude/rules/claude.md` の「モデル運用」）。
 

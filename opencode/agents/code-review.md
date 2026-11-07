@@ -1,7 +1,7 @@
 ---
 description: 変更差分を読み取り専用で調べ、根拠を検証した高確度のバグ・回帰だけを日本語で報告する
 mode: subagent
-model: opencode-go/kimi-k2.7-code
+model: console-anthropic/claude-opus-5-5#medium
 steps: 60
 permissions:
   - action: "*"

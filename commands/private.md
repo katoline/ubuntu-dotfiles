@@ -2,7 +2,7 @@
 
 ルート README のコマンド節からの個人用早見表。詳細・設計理由は各ディレクトリの README を見る。
 
-## Claude Code / Grok
+## Claude Code
 
 ### Skills
 ```
@@ -14,7 +14,7 @@
 /opencode
 ```
 
-`/opencode` は Claude Code 専用で、OpenCode へ実装を委譲する（既定は `opencode/deepseek-v4.1-flash-free`）。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても委譲する。利用上限時は GLM 5.3 Flash Free → Go → Sonnet 5.5（従量課金）へ自動切替。Codex からは `$opencode` を使う（今回だけ・`--session-wide`・`--once`）。詳細は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md) と [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md)。
+`/opencode` は Claude Code 専用で、OpenCode へ実装を委譲する（既定は `opencode/deepseek-v4.1-flash-free`）。Claude Code では全セッションで常時有効で、実装・調査・テストは明示的な呼出しがなくても委譲する。利用上限時は GLM 5.3 Flash Free → Go → Sonnet 5.5（従量課金）へ自動切替。Codex からは `$opencode` を使う（Codex でも常時有効）。詳細は [`.claude/skills/opencode/SKILL.md`](../.claude/skills/opencode/SKILL.md) と [`codex/skills/opencode/SKILL.md`](../codex/skills/opencode/SKILL.md)。
 
 ## OpenCode
 
@@ -24,9 +24,10 @@
 /clean-branches
 /nix-setup
 /git-pull
+/code-review
 ```
 
-単体起動は従来どおりで、Claude Code / Codex の `/opencode`・`$opencode` から呼ばれたときだけ `delegated-worker` Agent（commit / push / PR・worktree 変更・質問・再委譲なし）で動く。
+単体起動はメインが Opus 5.5（設計・レビュー）、サブエージェントが DeepSeek V4.1 Flash Free（実装・調査）で、`/code-review` も Opus 5.5。Claude Code / Codex の `/opencode`・`$opencode` から呼ばれたときだけ `delegated-worker` Agent（commit / push / PR・worktree 変更・質問・再委譲なし）で動く。
 
 OpenCodeのグローバル設定は [`opencode/README.md`](../opencode/README.md)。設定リンクは `home-manager switch`、CLIは次のコマンドで導入する：
 
@@ -41,11 +42,11 @@ bash ~/Dev/kaishi/ubuntu-dotfiles/opencode/setup.sh
 $opencode
 ```
 
-`$opencode` は Codex から OpenCode へ実装を委譲する入口（委譲範囲は上記と同じ）。PR作成の手順の実体は `.claude/skills/pr/SKILL.md`（`codex/prompts/pr.md` がそれを読ませる）。`/pr` 外のコミット・push・PR操作は `codex/hooks/guard.sh` が拒否する。設定は [`codex/`](../codex)。
+`$opencode` は Codex から OpenCode へ実装を委譲する入口で、メインセッションでは明示しなくても常時委譲する。Codex のサブエージェントは独立レビュー（`reviewer`）だけに使う。PR作成の手順の実体は `.claude/skills/pr/SKILL.md`（`codex/prompts/pr.md` がそれを読ませる）。既定ブランチへのコミット・push と PR のマージは `codex/hooks/guard.sh` が拒否する。設定は [`codex/`](../codex)。
 
-## Devin
+## Grok / Devin（休止中）
 
-グローバル指示と `permissions` のみ（Commandは未整備）。設定は [`devin/config.json`](../devin/config.json)。
+設定は [`archive/`](../archive/README.md) に保管（配布・導入しない）。
 
 ### 設定の配布・検証
 ```zsh
@@ -89,7 +90,7 @@ home-manager switch --flake ~/Dev/kaishi/ubuntu-dotfiles#ubuntu
 - Docker Engine + `docker` グループ
 - `gh auth login`、SSH鍵、各アプリへのサインイン
 - `sudo tailscale up`（未ログインのときだけ。iPhone側は `ssh-tailscale/README.md`）
-- iPhone SSH は自動で tmux（切断しても grok が残る。詳細は `tmux/README.md`）
+- iPhone SSH は自動で tmux（切断しても claude / codex 等が残る。詳細は `tmux/README.md`）
 
 OpenSSH / Tailscale は `bootstrap.sh` と `home-manager switch` が `ssh-tailscale/setup.sh` を実行する。
 

@@ -1,6 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "model": "console-anthropic/claude-opus-5-5",
   "default_agent": "build",
+  "experimental": { "todo": true },
   "skills": ["~/Dev/kaishi/ubuntu-dotfiles/opencode/skills"],
   "plugins": ["./plugins/shared-harness.js"],
   "permissions": [
@@ -102,6 +104,10 @@
     { "action": "shell", "resource": "home-manager * switch*", "effect": "ask" }
   ],
   "agents": {
+    "build": { "model": "console-anthropic/claude-opus-5-5#medium" },
+    "plan": { "model": "console-anthropic/claude-opus-5-5#medium" },
+    "general": { "model": "opencode/deepseek-v4.1-flash-free" },
+    "explore": { "model": "opencode/deepseek-v4.1-flash-free" },
     "delegated-worker": {
       "description": "親セッションから委譲された実装・調査・検証を担当する軽量 worker",
       "mode": "primary",

@@ -43,7 +43,7 @@
 
     # 変換中プレビューをアプリへ埋め込まない。既定の true だと VSCode 統合
     # ターミナルの xterm.js が Mozc の未確定文字（ｋ・ｎ）を確定扱いし、
-    # Grok / Claude Code の TUI で「この」が「ｋこｎこのこの」になる。
+    # Claude Code などの TUI で「この」が「ｋこｎこのこの」になる。
     # false にするとプリエディットはカーソル付近のフローティング窓に出る。
     # 確定した文字列だけが PTY へ送られる。ibus 再起動は不要（即反映）
     "desktop/ibus/general" = {
