@@ -1,4 +1,4 @@
-// OpenCode V2 と共通ハーネス（Claude Code / Codex / Grok と同じ guard / pr-mode / verify-gate）の接続。
+// OpenCode V2 と共通ハーネス（Claude Code / Codex / Grok と同じ guard / pr-mode / verify-gate / completion-gate）の接続。
 //
 // このファイルは OpenCode の plugin として読み込まれ、判定は opencode/hooks/harness.sh に委譲する。
 // Git の許可判定は /pr の起動状態に依存しない:
@@ -12,6 +12,9 @@
 //   execution.started / failed / interrupted と実 user の変更は generation を進め、進行中の検証ジョブ
 //   （synthetic 再開）を無効化する。終了判定は session ごとの job で行い、event stream を止めない。
 // - synthetic / compact で元の実 user が見えなくなっただけでは新しい turn にしない。
+// - 完了チェックゲート（completion-gate.sh）も同じ集約先・namespace で接続する。新しい実 user で
+//   complete-prompt、編集・shell の後に complete-post、終了時は verify-stop が block も警告も返さないときだけ
+//   complete-stop を呼ぶ。block の再開は verify と同じ（turn ごとに 1 回、state.nudged を共有）。
 // 実装しないこと:
 // - commit / push / PR の実行（許可判定だけを行う）
 // - 独自の削除・Git 判定・検証分類（共通スクリプトの結果をそのまま使う）
@@ -288,6 +291,15 @@ export default {
         // 実 user が変わったときだけ、前の turn の検証ジョブを無効化する。
         // 初回同期（この job が最初に user を知る場合）は同じ turn なので進めない。
         if (newTurn) state.generation++
+        // 完了チェックゲートの「このターンの促し回数」を戻す（UserPromptSubmit 相当）。失敗は無視する
+        try {
+          await runAdapter("complete-prompt", {
+            session_id: namespace(sessionID),
+            cwd: info.location?.directory || "",
+          })
+        } catch {
+          // 完了チェックの記録失敗は turn 管理に影響させない
+        }
         return { ok: true, managed: true }
       })
     }
@@ -484,6 +496,8 @@ export default {
       // 記録に失敗した turn だけ警告する。成功した記録で回復させる（失敗を残し続けない）。
       const state = sessions.get(root.rootID)
       if (state) state.verifyBroken = !run.ok
+      // 完了チェックゲートにも同じ集約先で記録する（失敗は他の判定に影響させない）
+      await runAdapter("complete-post", { session_id: namespace(root.rootID), ...payload })
     }
 
     // どれか必須フックの登録に失敗したら plugin のセットアップを失敗させる。
@@ -630,7 +644,7 @@ export default {
       }
     }
 
-    const notifyVerifyFailure = (sessionID, state, generation, text) => {
+    const notifyFailure = (sessionID, state, generation, text, kind) => {
       if (!alive(sessionID, state, generation) || state.nudgeFailed) return Promise.resolve(false)
       state.nudgeFailed = true
       return sendSynthetic(sessionID, state, generation, {
@@ -638,8 +652,87 @@ export default {
         delivery: "steer",
         // 実機では resume 省略でも steer が再開するため、再開しないことを明示する
         resume: false,
-        metadata: { source: "dotfiles.shared-harness", kind: "verify-gate-error" },
+        metadata: { source: "dotfiles.shared-harness", kind },
       })
+    }
+    const notifyVerifyFailure = (sessionID, state, generation, text) =>
+      notifyFailure(sessionID, state, generation, text, "verify-gate-error")
+
+    const GATES = {
+      verify: {
+        name: "verify-gate",
+        suffix: "検証を実行してから終了してください。",
+        failure: "verify-gate: 検証の再開に失敗しました。変更は未検証です。検証コマンドを実行してから終了してください。",
+      },
+      completion: {
+        name: "completion-gate",
+        suffix: "確認結果を報告に書いてから終了してください。",
+        failure:
+          "completion-gate: 完了チェックの再開に失敗しました。要件ごとの確認結果を報告に書いてから終了してください。",
+      },
+    }
+
+    // Stop 相当の判定結果（block / systemMessage）を synthetic に反映する。何もしなければ false。
+    // 再開は turn ごとに 1 回（state.nudged を verify / completion で共有）、警告も 1 回だけ。
+    const applyStopDecision = async (sessionID, state, generation, userID, parsed, gate) => {
+      const current = () => alive(sessionID, state, generation)
+      if (parsed.decision === "block" && parsed.reason) {
+        if (state.nudged) {
+          // この turn は 1 回再開済み。pending は消さず、警告を 1 回だけ残して終える
+          // （delivery:steer 自体が再開する環境でも、警告の連鎖でループしない）。
+          // 次の実 user は新しい turn として再び 1 回だけ促せる。
+          if (state.warned || !current() || state.userID !== userID) return true
+          state.warned = true
+          await sendSynthetic(sessionID, state, generation, {
+            text: parsed.reason,
+            delivery: "steer",
+            resume: false,
+            metadata: { source: "dotfiles.shared-harness", kind: `${gate.name}-warning` },
+          })
+          return true
+        }
+        // synthetic の直前に generation・最新実 user・location・outcome を再確認する
+        const latest = await latestUserID(sessionID)
+        const now = await getInfo(sessionID)
+        if (!current() || state.userID !== userID || state.nudged) return true
+        if (!latest.ok || (latest.id && latest.id !== userID)) return true
+        if (!now || !locationMatches(ctx, now) || now.outcome !== "succeeded") return true
+        state.nudged = true
+        const sent = await sendSynthetic(sessionID, state, generation, {
+          text: `${parsed.reason}\n\n${gate.suffix}`,
+          delivery: "steer",
+          resume: true,
+          metadata: { source: "dotfiles.shared-harness", kind: `${gate.name}-resume` },
+        })
+        if (!sent && alive(sessionID, state, generation)) {
+          state.nudged = false
+          await notifyFailure(sessionID, state, generation, gate.failure, `${gate.name}-error`)
+        }
+        return true
+      }
+
+      if (parsed.systemMessage) {
+        // verify は active=false では通常返らないが、返っても pending は消さず警告だけにする。
+        if (state.warned || !current() || state.userID !== userID) return true
+        state.warned = true
+        await sendSynthetic(sessionID, state, generation, {
+          text: parsed.systemMessage,
+          delivery: "steer",
+          resume: false,
+          metadata: { source: "dotfiles.shared-harness", kind: `${gate.name}-warning` },
+        })
+        return true
+      }
+      return false
+    }
+
+    const parseStop = (run) => {
+      if (!run.stdout.trim()) return {}
+      try {
+        return JSON.parse(run.stdout)
+      } catch {
+        return undefined
+      }
     }
 
     // 終了判定は session ごとの job。event stream は待たず、started / interrupted は
@@ -697,79 +790,33 @@ export default {
           )
           return
         }
-        let parsed = {}
-        if (run.stdout.trim()) {
-          try {
-            parsed = JSON.parse(run.stdout)
-          } catch {
-            await notifyVerifyFailure(
-              sessionID,
-              state,
-              generation,
-              "verify-gate: 検証判定の JSON を解釈できませんでした。変更は未検証の可能性があります（自動再開はしません）。",
-            )
-            return
-          }
-        }
-
-        if (parsed.decision === "block" && parsed.reason) {
-          if (state.nudged) {
-            // この turn は 1 回再開済み。pending は消さず、警告を 1 回だけ残して終える
-            // （delivery:steer 自体が再開する環境でも、警告の連鎖でループしない）。
-            // 次の実 user は新しい turn として再び 1 回だけ促せる。
-            if (state.warned || !current() || state.userID !== userID) return
-            state.warned = true
-            await sendSynthetic(sessionID, state, generation, {
-              text: parsed.reason,
-              delivery: "steer",
-              resume: false,
-              metadata: { source: "dotfiles.shared-harness", kind: "verify-gate-warning" },
-            })
-            return
-          }
-          // synthetic の直前に generation・最新実 user・location・outcome を再確認する
-          const latest = await latestUserID(sessionID)
-          const now = await getInfo(sessionID)
-          if (!current() || state.userID !== userID || state.nudged) return
-          if (!latest.ok || (latest.id && latest.id !== userID)) return
-          if (!now || !locationMatches(ctx, now) || now.outcome !== "succeeded") return
-          state.nudged = true
-          const sent = await sendSynthetic(sessionID, state, generation, {
-            text: `${parsed.reason}\n\n検証を実行してから終了してください。`,
-            delivery: "steer",
-            resume: true,
-            metadata: { source: "dotfiles.shared-harness", kind: "verify-gate-resume" },
-          })
-          if (!sent && alive(sessionID, state, generation)) {
-            state.nudged = false
-            await notifyVerifyFailure(
-              sessionID,
-              state,
-              generation,
-              "verify-gate: 検証の再開に失敗しました。変更は未検証です。検証コマンドを実行してから終了してください。",
-            )
-          }
+        const parsed = parseStop(run)
+        if (!parsed) {
+          await notifyVerifyFailure(
+            sessionID,
+            state,
+            generation,
+            "verify-gate: 検証判定の JSON を解釈できませんでした。変更は未検証の可能性があります（自動再開はしません）。",
+          )
           return
         }
-
-        if (parsed.systemMessage) {
-          // active=false では通常返らないが、返っても pending は消さず警告だけにする。
-          if (state.warned || !current() || state.userID !== userID) return
-          state.warned = true
-          await sendSynthetic(sessionID, state, generation, {
-            text: parsed.systemMessage,
-            delivery: "steer",
-            resume: false,
-            metadata: { source: "dotfiles.shared-harness", kind: "verify-gate-warning" },
-          })
-          return
-        }
+        // verify が block / 警告の turn では completion を呼ばない（completion の状態を消費しない）
+        if (await applyStopDecision(sessionID, state, generation, userID, parsed, GATES.verify)) return
 
         // 検証済み、または記録なし
-        if (current() && state.userID === userID) {
-          state.nudged = false
-          state.warned = false
-        }
+        if (!current() || state.userID !== userID) return
+        state.nudged = false
+        state.warned = false
+
+        // 続けて完了チェック（PDCA の Check）。失敗しても再開・警告はしない（verify の判定は済んでいる）
+        const done = await runAdapter("complete-stop", {
+          session_id: namespace(sessionID),
+          cwd: info.location?.directory || "",
+        })
+        if (!current() || state.userID !== userID || !done.ok) return
+        const completion = parseStop(done)
+        if (!completion) return
+        await applyStopDecision(sessionID, state, generation, userID, completion, GATES.completion)
       } catch {
         // 判定中の例外では再開しない
       }

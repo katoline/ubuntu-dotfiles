@@ -7,6 +7,9 @@
 #   pr-request   … pr-mode.sh に PermissionRequest を渡す（コマンドは単一の Bash 入力）
 #   verify-post  … verify-gate.sh に PostToolUse を渡す
 #   verify-stop  … verify-gate.sh に Stop を渡す
+#   complete-prompt … completion-gate.sh に UserPromptSubmit を渡す（新しい実 user のターン）
+#   complete-post   … completion-gate.sh に PostToolUse を渡す
+#   complete-stop   … completion-gate.sh に Stop を渡す
 #
 # Git の許可判定は /pr の起動状態に依存しない（既定ブランチ保護方式）。pr-mode.sh の
 # PreToolUse は既定ブランチ宛の commit / push・force / 削除・宛先不明 push を deny し、
@@ -90,9 +93,32 @@ run_verify() {
   printf '%s' "$payload" | bash "$h"
 }
 
+run_complete() {
+  local event="$1" h="$ROOT/.claude/hooks/completion-gate.sh" payload tool path cmd cwd
+  [ -f "$h" ] || exit 1
+  cwd=$(field cwd)
+  case "$event" in
+    complete-prompt)
+      payload=$(hook_json --arg s "$session" --arg d "$cwd" \
+        '{hook_event_name:"UserPromptSubmit",session_id:$s,cwd:$d}') || exit 1 ;;
+    complete-post)
+      tool=$(field tool_name); path=$(field file_path); cmd=$(field command)
+      [ -n "$tool" ] || exit 1
+      payload=$(hook_json --arg t "$tool" --arg s "$session" --arg f "$path" --arg c "$cmd" --arg d "$cwd" \
+        '{hook_event_name:"PostToolUse",session_id:$s,tool_name:$t,
+          tool_input:(if $t == "Bash" then {command:$c} else {file_path:$f} end),cwd:$d}') || exit 1 ;;
+    complete-stop)
+      payload=$(hook_json --arg s "$session" --arg d "$cwd" \
+        '{hook_event_name:"Stop",session_id:$s,stop_hook_active:false,cwd:$d}') || exit 1 ;;
+    *) exit 1 ;;
+  esac
+  printf '%s' "$payload" | bash "$h"
+}
+
 case "$op" in
   guard) run_guard ;;
   pr-pre | pr-request) run_pr "$op" ;;
   verify-post | verify-stop) run_verify "$op" ;;
+  complete-prompt | complete-post | complete-stop) run_complete "$op" ;;
   *) exit 1 ;;
 esac

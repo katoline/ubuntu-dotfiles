@@ -1,11 +1,29 @@
 # OpenCode 固有の補足
 
-- 通常起動（既定の `build`）では、Claude Code / Codex と同じメイン担当として対話・Skills・サブ agent・質問・レビュー・PR・worktree の安全な cleanup を使う。`delegated-worker` Agent で起動された場合だけ、その Agent の `system` と `permissions` に従う
+- 通常起動（既定の `build`）では、Claude Code / Codex と同じメイン担当として対話・Skills・サブエージェント・質問・レビュー・PR・worktree の安全な cleanup を使う。`delegated-worker` Agent で起動された場合だけ、その Agent の `system` と `permissions` に従う
 - `delegated-worker` は親セッション（Claude Code / Codex）から委譲された実装・調査・検証担当で、Skill の選択・ユーザーへの質問・子への再委譲・Git の書き込み（commit / push / PR）・worktree の変更はできない。拒否された操作や判断に迷う点は、回避せず親へ返す
-- Claude Code / Grok の Hooks・`settings.json`・モデル振り分けは OpenCode では動かない。単体の `build` / `plan` / `pr` では `opencode/plugins/shared-harness.js` が `opencode/hooks/harness.sh` 経由で共通の `guard-destructive.sh`・`pr-mode.sh`・`verify-gate.sh` を V2 plugin API で使う（V1 hooks ではない）。削除 roots・Git 判定・検証分類を OpenCode 側に複写しない。plugin/adapter が読めない・健全性確認に失敗した場合は setup を失敗させ、`opencode.json` の ask を安全網に残す
-- Git の許可判定は `/pr` の起動状態に依存しない。permission 評価で共通 `guard-destructive.sh` と `pr-mode.sh` の PreToolUse を呼び、deny / ask をそのまま反映する。どちらも決定を返さず、フル入力の単一コマンド・メインセッション・設定が ask のときだけ `pr-mode.sh` の PermissionRequest（`pr-request`）を呼び、allow ならそれを反映する。既定ブランチへの commit / push は常に deny、force push・削除・`--no-verify` は拒否する。`pr-request` は `PR_MODE_REQUEST_SCOPE=git` で呼ばれ、main 時点と同じく既定ブランチ以外の commit / push / PR 作成・更新（`is_auto_approvable` を満たす単一コマンド）だけを allow する。それ以外の設定の ask（`home-manager switch`・`apt install`・`git reset --hard` 等）は残り、PR のマージも allow しない。Claude Code だけがマージ以外をすべて allow する。session.get の失敗は拒否、session.context の失敗は Git の許可判定に影響しない（検証 turn の管理だけに使う）。worker と通常 subagent の Git 書き込みは agent_id 付きで拒否する
-- 検証促しは V2 に同期 Stop が無いため、TUI の実行成功後に `session.synthetic(resume:true)` で実 user のターンごとに最大 1 回だけ再開する補助。再開済みなら共通 `verify-gate.sh` の pending を消さず、`resume:false` の警告 synthetic を 1 回だけ inbox に残す（会話への即時表示・取り込みは native UI 依存）。次の実 user で改めて 1 回促す。中断・失敗・新しい実 user・他 location・旧 generation・plugin 終了後の旧 job では再開しない。`run` CLI は終了とイベントの race があり保証しない。`delegated-worker` はこの再開の対象外
-- `verify-gate.sh` は検証待ちを編集した worktree ごとに保持し、同じ worktree の直接形（repo root の `bash .claude/tests/run.sh`、`.claude` の `bash tests/run.sh`、絶対パスの `bash <worktree>/.claude/tests/run.sh`、repo root の `nix eval --raw .#…`）の成功だけで解除する。cd・複合コマンド・別 flake の明示は解除しない（pending のまま Stop の説明に従わせる）
-- `/pr` Command 本文を受け取ったこと自体、またはユーザー発言の先頭トークンが `@pr` であること（Markdown のコード表記・引用符で囲まれていても同じ）を明示起動として扱う。UI 上に Command 名が見えるかは条件にしない。再確認・拒否せず `pr` Skill を最後まで実行し、PR の作成・更新か失敗理由を報告する（本文中で言及しただけなら起動扱いにしない）
-- 既定ブランチ以外の commit・push・PR の作成と更新は、Skill に書かれた順序で実行し、`/pr` の起動有無にかかわらず plugin が自動許可する（共通 `pr-mode.sh` の自動承認条件を満たす単一コマンドだけ）。`gh pr create`・`gh pr new`・`gh pr edit` は設定上 ask のままで、plugin を読み込めない場合は確認を待つ。既定ブランチへの push、force push、PR のマージは行わない（`delegated-worker` は commit / push / PR を permission で拒否する）
+- Claude Code の Hooks・`settings.json` は OpenCode では動かない。代わりに `opencode/plugins/shared-harness.js` が共通の `guard-destructive.sh`・`pr-mode.sh`・`verify-gate.sh`・`completion-gate.sh` を permission とセッションのイベントへ接続している
 - OpenCode の認証情報は読まない・リポジトリに保存しない
+
+# モデル運用（OpenCode 単体）
+
+メインセッション（`build` / `plan`）向け。サブエージェントや `delegated-worker` として起動されたら本節は使わず、与えられた指示を実行する。委譲の原則は共通ルールの「サブエージェント」。モデルは `opencode.json` で設定済みなので、メインのモデルを自分で変えない。
+
+- **メイン（Claude Opus 5.5・medium）**：要件整理・設計・分解・指示・レビュー・最終判断。1〜2ファイルの確認と自明な局所修正は自分で行ってよい
+- **`general` サブエージェント（DeepSeek V4.1 Flash Free）**：実装・テスト作成と実行・ドキュメント更新・複数ファイルにまたがる調査は、ユーザーの明示的な依頼がなくても委譲する
+- **`explore` サブエージェント（DeepSeek V4.1 Flash Free）**：読み取りだけの所在調査
+- **`code-review` サブエージェント（メインと同じ Opus 5.5・medium）**：独立レビューだけに使う。差分と要件だけを渡す（`/code-review` も同じ Agent）
+
+運用：
+
+- サブエージェントが利用上限（レート制限・quota）で失敗したときだけ、同じ指示で `subagent` ツールの `model` に `opencode/deepseek-v4.1-flash` を指定して1回だけ再実行する（ユーザーが指定した切替先なので、この場合は `model` を設定してよい）。それ以外の失敗（認証・権限拒否・モデル不存在・context length 等）では切り替えない
+- 切替先も上限になったとき、またはサブエージェントが使えないときは、メインで実装を肩代わりせず状況を報告してユーザーに判断を仰ぐ。ユーザーが「メインでやって」等とその作業に明示したときだけメインで行う
+- 同じ作業ツリーで同じファイルを触る作業は並列に投げない
+- サブエージェントの報告した検証結果は鵜呑みにせず、変更後にプロジェクトの検証コマンドをメインがフォアグラウンドで実行し直す
+
+# ハーネスの挙動（OpenCode 単体）
+
+- Git：既定ブランチへの commit / push、force push、削除系、`--no-verify` は拒否される。既定ブランチ以外の commit・push・PR の作成と更新（単一コマンド）は plugin が自動許可する。`gh pr merge` は permission 上 ask だが、ユーザーがその PR のマージを明示的に指示したときだけ実行する。サブエージェントと `delegated-worker` の Git 書き込みは拒否される
+- 検証ゲート：dotfiles の検証対象を編集したターンは、検証コマンド（同じ worktree の repo root で `bash .claude/tests/run.sh` / `nix eval --raw .#…` の直接形）が成功するまで、終了時に1回だけ自動で再開して検証を促す。cd・複合コマンドでは解除されない
+- 完了チェック：ファイルを変更したターンの終了時に、共通ルール「作業の進め方（PDCA）」の Check を促して再開する（1ターン3回まで。検証待ちが残っているターンは検証ゲートを優先）。促されたら確認結果を報告に書き、未達があれば直してから終える
+- `/pr` Command 本文を受け取ったこと自体、またはユーザー発言の先頭トークンが `@pr` であること（コード表記・引用符で囲まれていても同じ）を明示起動として扱い、再確認・拒否せず `pr` Skill を最後まで実行して PR の作成・更新か失敗理由を報告する（本文中で言及しただけなら起動扱いにしない）
