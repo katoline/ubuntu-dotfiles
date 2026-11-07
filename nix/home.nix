@@ -124,14 +124,6 @@ in
       source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/git/.gitconfig";
       force = true;
     };
-    # Grok CLI の設定。grok 自身もこのファイルへ書き込むため、書き込み可能
-    # リンクにして変更をリポジトリ側へ取り込む（VSCode設定と同じ方式）。
-    # force = true は既存実体ファイルの置き換え用。Grok がリンクを実体で
-    # 置き換えた場合は、下の captureGrokConfigWrites が switch 直前に取り込む
-    ".grok/config.toml" = {
-      source = config.lib.file.mkOutOfStoreSymlink "${dotfilesPath}/grok/config.toml";
-      force = true;
-    };
     # config.toml / hooks.json は下の mergeCliConfigs が実ファイルとして生成する。
     # フックスクリプトと旧プロンプトは個別リンクを維持する。
     ".codex/hooks/guard.sh" = {
@@ -270,19 +262,6 @@ in
     run /bin/bash ${dotfilesPath}/vscode/install-extensions.sh
   '';
 
-  # Grok が ~/.grok/config.toml のシンボリックリンクを実体ファイルで置き換えた
-  # 場合、home.file の force=true がリンクに戻す前に実体側をリポジトリへ取り込む
-  home.activation.captureGrokConfigWrites = lib.hm.dag.entryBefore [ "writeBoundary" ] ''
-    dest="$HOME/.grok/config.toml"
-    src="${dotfilesPath}/grok/config.toml"
-    if [ -f "$dest" ] && [ ! -L "$dest" ] && [ -f "$src" ] && [ "$dest" -nt "$src" ]; then
-      if ! cmp -s "$src" "$dest"; then
-        run cp "$dest" "$src"
-        echo "Grok config.toml の実体変更をリポジトリへ取り込みました"
-      fi
-    fi
-  '';
-
   # 旧世代の home.file リンクを先に実ファイルにする。linkGeneration は実ファイルを
   # 旧管理リンクとして削除しないので、リンク先や外部ツールの保存内容を引き継げる。
   # リポジトリの旧設定を更新する前の移行手順は codex/README.md を参照。
@@ -291,7 +270,7 @@ in
       --repo ${lib.escapeShellArg dotfilesPath} --home "$HOME" --detach-only
   '';
 
-  # 宣言した値だけを上書きし、trust・trusted_hash・desktop のランタイム・org_id は
+  # 宣言した値だけを上書きし、trust・trusted_hash・desktop のランタイムは
   # ホーム側へ残す。外部ツールが実ファイルを更新してもリポジトリへは取り込まない。
   home.activation.mergeCliConfigs = lib.hm.dag.entryAfter [ "linkGeneration" "detachCliConfigLinks" ] ''
     run ${cliConfigPython}/bin/python3 ${dotfilesPath}/nix/merge-cli-config.py \
@@ -324,7 +303,7 @@ in
   '';
 
   # 全CLI共通のグローバル指示（ai/core.md + ai/<cli>.md）を各CLIへ配布する。
-  # Claude Code はリンク、include を持たない Grok / Codex / Devin は連結生成。
+  # Claude Code はリンク、include を持たない OpenCode / Codex は連結生成。
   # setup.sh が ~/.claude の古いリンクを掃除した後に走らせる（順序が逆だと
   # ~/.claude/CLAUDE.md の新しいリンクを切れリンクとして消される可能性がある）
   home.activation.linkAiInstructions = lib.hm.dag.entryAfter [ "linkClaudeConfig" ] ''

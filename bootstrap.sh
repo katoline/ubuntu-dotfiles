@@ -15,15 +15,13 @@
 #   9. ibus-mozc / mozc-utils-gui を導入（apt。IME本体はNix管理外）
 #   10. code（--classic）・slack を導入（snap）
 #   11. Google Chrome を導入（apt。公式debをダウンロードして導入）
-#   12. Grok CLI を導入（公式インストーラー・自動更新版。あえてNix管理外）
-#   13. OpenCode CLI を導入（公式インストーラー。あえてNix管理外）
-#   14. OpenSSH サーバーと Tailscale を導入（iPhoneからの遠隔SSH。本体はNix管理外）
-#   15. Codex CLI を導入（公式インストーラー・自動更新版。あえてNix管理外）
-#   16. Devin CLI を導入（公式インストーラー。最後に初期設定ウィザードが起動する）
+#   12. OpenCode CLI を導入（公式インストーラー。あえてNix管理外）
+#   13. OpenSSH サーバーと Tailscale を導入（iPhoneからの遠隔SSH。本体はNix管理外）
+#   14. Codex CLI を導入（公式インストーラー・自動更新版。あえてNix管理外）
 #
 # 何度実行しても安全（冪等）。途中で失敗したら原因を解消して再実行すればよい。
-# 9〜11・14 はsudoが使えない環境では警告を出してスキップする（bootstrap全体は継続する）。
-# AI コーディング CLI（8・12・15・16）は取得・実行に失敗しても警告して飛ばし、最後に一覧で再掲する。
+# 9〜11・13 はsudoが使えない環境では警告を出してスキップする（bootstrap全体は継続する）。
+# AI コーディング CLI（8・14）は取得・実行に失敗しても警告して飛ばし、最後に一覧で再掲する。
 
 set -euo pipefail
 
@@ -58,13 +56,13 @@ install_cli() {
   return 0
 }
 
-echo "==> 1/16 前提パッケージ（git・curl・zsh）を確認"
+echo "==> 1/14 前提パッケージ（git・curl・zsh）を確認"
 if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v zsh >/dev/null 2>&1; then
   echo "不足しているパッケージをaptで導入します"
   sudo apt-get update && sudo apt-get install -y git curl zsh
 fi
 
-echo "==> 2/16 Nix を確認"
+echo "==> 2/14 Nix を確認"
 if ! command -v nix >/dev/null 2>&1; then
   if [ -x /nix/var/nix/profiles/default/bin/nix ]; then
     # インストール済みだがこのシェルにPATHが通っていないだけ
@@ -79,7 +77,7 @@ if ! command -v nix >/dev/null 2>&1; then
   fi
 fi
 
-echo "==> 3/16 リポジトリを $DOTFILES_DIR へ配置"
+echo "==> 3/14 リポジトリを $DOTFILES_DIR へ配置"
 mkdir -p "$BASE_DIR"
 if [ ! -d "$DOTFILES_DIR/.git" ]; then
   git clone "$REPO_URL" "$DOTFILES_DIR"
@@ -88,16 +86,16 @@ else
 fi
 cd "$DOTFILES_DIR"
 
-echo "==> 4/16 flake.nix の username をこのマシンのユーザー名 ($CURRENT_USER) に合わせる"
+echo "==> 4/14 flake.nix の username をこのマシンのユーザー名 ($CURRENT_USER) に合わせる"
 sed -i -E "s|username = \"[^\"]+\";|username = \"$CURRENT_USER\";|" flake.nix
 if ! git diff --quiet flake.nix; then
   echo "flake.nix の username を書き換えました。あとでこの差分をコミットしてください"
 fi
 
-echo "==> 5/16 home-manager を適用します（sudo不要）"
+echo "==> 5/14 home-manager を適用します（sudo不要）"
 nix run home-manager/master -- switch --flake ".#ubuntu" -b hm-backup
 
-echo "==> 6/16 ログインシェルを zsh に変更"
+echo "==> 6/14 ログインシェルを zsh に変更"
 if [ "$(basename "$SHELL")" != "zsh" ]; then
   echo "パスワードを求められる場合があります"
   chsh -s "$(command -v zsh)"
@@ -105,7 +103,7 @@ else
   echo "既に zsh のためスキップします"
 fi
 
-echo "==> 7/16 Oh My Zsh と Powerlevel10k を導入"
+echo "==> 7/14 Oh My Zsh と Powerlevel10k を導入"
 if [ -d "$HOME/.oh-my-zsh" ]; then
   echo "Oh My Zsh は既に導入済みのためスキップします"
 else
@@ -117,7 +115,7 @@ else
   git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
 fi
 
-echo "==> 8/16 Claude Code CLI を確認"
+echo "==> 8/14 Claude Code CLI を確認"
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
   echo "Claude Code をインストールします（公式インストーラー・自動更新あり）"
   install_cli "Claude Code" https://claude.ai/install.sh "" bash
@@ -125,7 +123,7 @@ else
   echo "既にインストール済みのためスキップします"
 fi
 
-echo "==> 9/16 ibus-mozc / mozc-utils-gui を確認"
+echo "==> 9/14 ibus-mozc / mozc-utils-gui を確認"
 if ! command -v sudo >/dev/null 2>&1; then
   echo "sudo が使用できないためスキップします。ibus-mozc / mozc-utils-gui は手動で導入してください"
 else
@@ -138,7 +136,7 @@ else
   fi
 fi
 
-echo "==> 10/16 code（--classic）・slack を確認"
+echo "==> 10/14 code（--classic）・slack を確認"
 if ! command -v sudo >/dev/null 2>&1; then
   echo "sudo が使用できないためスキップします。code / slack は手動で導入してください"
 else
@@ -154,7 +152,7 @@ else
   fi
 fi
 
-echo "==> 11/16 Google Chrome を確認"
+echo "==> 11/14 Google Chrome を確認"
 if ! command -v sudo >/dev/null 2>&1; then
   echo "sudo が使用できないためスキップします。Google Chrome は手動で導入してください"
 else
@@ -170,35 +168,17 @@ else
   fi
 fi
 
-echo "==> 12/16 Grok CLI を確認"
-if ! command -v grok >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/grok" ]; then
-  echo "Grok CLI をインストールします（公式インストーラー・自動更新あり）"
-  install_cli "Grok CLI" https://x.ai/cli/install.sh "" bash
-else
-  echo "既にインストール済みのためスキップします"
-fi
-
-echo "==> 13/16 OpenCode CLI を確認"
+echo "==> 12/14 OpenCode CLI を確認"
 bash "$DOTFILES_DIR/opencode/setup.sh"
 
-echo "==> 14/16 OpenSSH・Tailscale（iPhoneからの遠隔SSH）"
+echo "==> 13/14 OpenSSH・Tailscale（iPhoneからの遠隔SSH）"
 bash "$DOTFILES_DIR/ssh-tailscale/setup.sh"
 
-echo "==> 15/16 Codex CLI を確認"
+echo "==> 14/14 Codex CLI を確認"
 if ! command -v codex >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/codex" ]; then
   echo "Codex CLI をインストールします（公式インストーラー・自動更新あり）"
   # CODEX_NON_INTERACTIVE=1 で "Start Codex now?" 等の対話プロンプトを抑止する
   install_cli "Codex CLI" https://chatgpt.com/codex/install.sh "" env CODEX_NON_INTERACTIVE=1 sh
-else
-  echo "既にインストール済みのためスキップします"
-fi
-
-echo "==> 16/16 Devin CLI を確認"
-if ! command -v devin >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/devin" ]; then
-  echo "Devin CLI をインストールします（最後に初期設定ウィザード devin setup が起動する）"
-  # ウィザードの中断・失敗で bootstrap 全体を止めない
-  install_cli "Devin CLI" https://cli.devin.ai/install.sh \
-    "導入または初期設定が完了しませんでした。devin --version で導入を確認し、必要なら devin setup を実行してください" bash
 else
   echo "既にインストール済みのためスキップします"
 fi
@@ -213,4 +193,4 @@ echo ""
 echo "セットアップ完了！"
 echo "手動で必要な残作業（~/.claude/claude-notify.json の配置、~/.gitconfig.local の配置、Docker Engineの導入、"
 echo "sudo tailscale up、iPhoneのTailscale / SSHアプリ）は nix/README.md と ssh-tailscale/README.md を参照してください。"
-echo "tmux は home-manager で入る。iPhone から SSH すると自動で attach し、切断しても grok は残る。"
+echo "tmux は home-manager で入る。iPhone から SSH すると自動で attach し、切断しても claude / codex などは残る。"

@@ -20,16 +20,18 @@ link_of() { if [ -L "$1" ]; then readlink "$1"; else echo "not-a-link"; fi; }
 body_of() { if [ -f "$1" ]; then cat "$1"; else echo ""; fi; }
 
 echo "# A. 初回配布"
+# 休止中の Grok / Devin の生成先に既存ファイルがあっても触らない（A09・A10 で検査する）
+mkdir -p "$H/.grok" "$H/.config/devin"
+printf '休止前に生成された Grok の指示\n' > "$H/.grok/AGENTS.md"
+printf '休止前に生成された Devin の指示\n' > "$H/.config/devin/AGENTS.md"
 run_install; rc=$?
 report A01-exit-0 0 "$rc" "$(cat "$H/err.txt" 2>/dev/null)"
 report A02-claude-md-link "$AI_DIR/core.md" "$(link_of "$H/.claude/CLAUDE.md")" ""
 report A03-claude-rules-link "$AI_DIR/claude.md" "$(link_of "$H/.claude/rules/claude.md")" ""
-for cli in opencode grok codex devin; do
+for cli in opencode codex; do
   case "$cli" in
     opencode) dest="$H/.config/opencode/AGENTS.md" ;;
-    grok) dest="$H/.grok/AGENTS.md" ;;
     codex) dest="$H/.codex/AGENTS.md" ;;
-    devin) dest="$H/.config/devin/AGENTS.md" ;;
   esac
   b=$(body_of "$dest")
   report "A04-${cli}-core" yes "$(has "$b" '# レビューの範囲')" "$dest"
@@ -38,8 +40,20 @@ for cli in opencode grok codex devin; do
   report "A07-${cli}-is-file" no "$(if [ -L "$dest" ]; then echo yes; else echo no; fi)" "$dest"
 done
 # 共通コアは 1 か所だけ: 生成ファイルに「# 言語」が 2 回出ない（core と差分の二重連結の検出）
-n=$(grep -c '^# 言語$' "$H/.grok/AGENTS.md")
-report A08-core-once 1 "$n" ""
+for dest in "$H/.config/opencode/AGENTS.md" "$H/.codex/AGENTS.md"; do
+  n=$(grep -c '^# 言語$' "$dest")
+  report A08-core-once 1 "$n" "$dest"
+done
+# 休止中の CLI は配布対象外: 生成もしないし、既存ファイルにも触らない
+report A09-grok-untouched '休止前に生成された Grok の指示' "$(body_of "$H/.grok/AGENTS.md")" ""
+report A10-devin-untouched '休止前に生成された Devin の指示' "$(body_of "$H/.config/devin/AGENTS.md")" ""
+n=$(grep -ciE 'grok|devin' "$H/out.txt")
+report A11-no-paused-in-output 0 "$n" "$(cat "$H/out.txt")"
+H3="$T/claude-ai-install-home3.$$"; rm -rf "$H3"; mkdir -p "$H3"
+HOME="$H3" bash "$INSTALL" >/dev/null 2>&1
+report A12-no-grok-generated no "$(if [ -e "$H3/.grok/AGENTS.md" ]; then echo yes; else echo no; fi)" ""
+report A13-no-devin-generated no "$(if [ -e "$H3/.config/devin/AGENTS.md" ]; then echo yes; else echo no; fi)" ""
+rm -rf "$H3"
 
 echo "# B. 冪等性（内容が同じなら書き換えない）"
 before=$(stat -c %Y "$H/.codex/AGENTS.md" 2>/dev/null || stat -f %m "$H/.codex/AGENTS.md")
@@ -55,11 +69,11 @@ rm -f "$H/.claude/CLAUDE.md"; printf 'ローカルで書き換えた内容\n' > 
 run_install
 report C01-relinked "$AI_DIR/core.md" "$(link_of "$H/.claude/CLAUDE.md")" ""
 report C02-backup-kept yes "$(if [ -f "$H/.claude/CLAUDE.md.bak" ]; then echo yes; else echo no; fi)" ""
-# 旧構成（~/.grok/AGENTS.md がリポジトリの grok/AGENTS.md へのリンク）は実体ファイルに置き換える
-rm -f "$H/.grok/AGENTS.md"; ln -s "$AI_DIR/grok.md" "$H/.grok/AGENTS.md"
+# 旧構成（~/.codex/AGENTS.md がリポジトリの差分ファイルへのリンク）は実体ファイルに置き換える
+rm -f "$H/.codex/AGENTS.md"; ln -s "$AI_DIR/codex.md" "$H/.codex/AGENTS.md"
 run_install
-report C03-grok-link-replaced no "$(if [ -L "$H/.grok/AGENTS.md" ]; then echo yes; else echo no; fi)" ""
-report C04-grok-has-core yes "$(has "$(body_of "$H/.grok/AGENTS.md")" '# レビューの範囲')" ""
+report C03-codex-link-replaced no "$(if [ -L "$H/.codex/AGENTS.md" ]; then echo yes; else echo no; fi)" ""
+report C04-codex-has-core yes "$(has "$(body_of "$H/.codex/AGENTS.md")" '# レビューの範囲')" ""
 # 旧構成（リポジトリの opencode/AGENTS.md へのリンク）は実体ファイルに置き換える
 rm -f "$H/.config/opencode/AGENTS.md"; ln -s "$AI_DIR/opencode.md" "$H/.config/opencode/AGENTS.md"
 run_install
@@ -77,27 +91,17 @@ report D02-skills-source yes "$(has "$(jq -r '.skills // [] | join(",")' "$OC_JS
 # home.nix では AGENTS.md を配らない（install.sh が連結生成する）
 n=$(grep -cE '^\s*"(\.config/opencode|\.grok|\.codex|\.config/devin)/AGENTS\.md" *=' "$(cd "$TESTS_DIR/../.." && pwd)/nix/home.nix")
 report D03-no-generated-links 0 "$n" "連結生成するファイルを home.file のリンクにしない"
-# Grok は Claude 側の指示ファイルを読まない（読むと ~/.grok/AGENTS.md と二重になる）。
-# skills / hooks は共有するので false にしない
-GROK_TOML="$(cd "$TESTS_DIR/../.." && pwd)/grok/config.toml"
-compat=$(sed -n '/^\[compat\.claude\]/,/^\[/p' "$GROK_TOML" | grep -E '^[a-z]+ *=' | tr -d ' ' | paste -sd, -)
-report D04-grok-rules-off yes "$(has "$compat" 'rules=false')" "$compat"
-report D05-grok-agents-off yes "$(has "$compat" 'agents=false')" "$compat"
-report D06-grok-skills-kept no "$(has "$compat" 'skills=false')" "$compat"
-report D07-grok-hooks-kept no "$(has "$compat" 'hooks=false')" "$compat"
-# Devin も Claude のルールを読み込まない
-DEVIN_JSON="$(cd "$TESTS_DIR/../.." && pwd)/devin/config.json"
-report D08-devin-claude-off false "$(jq -r '.read_config_from.claude' "$DEVIN_JSON" 2>/dev/null)" ""
 
 echo "# E. 異常系"
-# 差分ファイルが無ければ失敗（非ゼロ）で終わり、他のファイルは配布する
+# 差分ファイル（ここでは codex.md）が無ければ失敗（非ゼロ）で終わり、他のファイルは配布する
 cp "$INSTALL" "$H/install-copy.sh"
-D2="$H/ai-broken"; mkdir -p "$D2"; cp "$AI_DIR/core.md" "$AI_DIR/claude.md" "$AI_DIR/grok.md" "$AI_DIR/opencode.md" "$D2/"
+D2="$H/ai-broken"; mkdir -p "$D2"; cp "$AI_DIR/core.md" "$AI_DIR/claude.md" "$AI_DIR/opencode.md" "$D2/"
 cp "$INSTALL" "$D2/install.sh"
 H2="$T/claude-ai-install-home2.$$"; rm -rf "$H2"; mkdir -p "$H2"
 HOME="$H2" bash "$D2/install.sh" >"$H2/out.txt" 2>&1; rc=$?
 report E01-missing-delta-rc 1 "$rc" "$(cat "$H2/out.txt")"
 report E02-claude-still-linked "$D2/core.md" "$(link_of "$H2/.claude/CLAUDE.md")" "1 つ失敗しても残りは配る"
+report E03-opencode-still-generated yes "$(has "$(body_of "$H2/.config/opencode/AGENTS.md")" '# レビューの範囲')" "1 つ失敗しても残りは配る"
 rm -rf "$H2" "$D2"
 
 echo "# F. Codex専用スキルを他CLIの共有探索先へ配らない"
@@ -135,14 +139,8 @@ for entry in instructions prompt; do
   report "F04-${entry}-private-pr" yes "$(has "$b" '~/.codex/skills/pr/SKILL.md')" "$entry"
   report "F05-${entry}-no-shared-skills" no "$(has "$b" '~/.agents/skills')" "$entry"
 done
-for cli in opencode grok devin; do
-  case "$cli" in
-    opencode) dest="$H/.config/opencode/AGENTS.md" ;;
-    grok) dest="$H/.grok/AGENTS.md" ;;
-    devin) dest="$H/.config/devin/AGENTS.md" ;;
-  esac
-  report "F06-${cli}-no-codex-skills" no "$(has "$(body_of "$dest")" '~/.codex/skills')" "$dest"
-done
+report F06-opencode-no-codex-skills no "$(has "$(body_of "$H/.config/opencode/AGENTS.md")" '~/.codex/skills')" ""
+
 
 cleanup
 summary "ai-install"

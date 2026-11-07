@@ -14,10 +14,9 @@
 #     OpenCode     … ~/.config/opencode/AGENTS.md を連結生成。V2 は AGENTS.md のみを読み、
 #                    CLAUDE.md へのフォールバックは無い。instructions はファイル・glob・URL を
 #                    解決できるが、ai/ を列挙すると AGENTS.md との二重読みになるため使わない
-#     Grok         … ~/.grok/AGENTS.md を連結生成
 #     Codex        … ~/.codex/AGENTS.md を連結生成
-#     Devin        … ~/.config/devin/AGENTS.md を連結生成
-# - 連結生成した4つは ai/*.md を編集したら再実行が必要（home-manager switch 時にも自動実行される）
+# - Grok / Devin は休止中で配布しない（設定と復元手順は archive/README.md）
+# - 連結生成した2つは ai/*.md を編集したら再実行が必要（home-manager switch 時にも自動実行される）
 # - 内容が同じなら書き換えない（mtime を動かさない）。1 つの失敗で残りを止めず、末尾にまとめて報告する
 
 set -u
@@ -66,7 +65,7 @@ generate_file() {
     echo "  = ~/$rel"
     return 0
   fi
-  # 旧構成のリンク（リポジトリの grok/AGENTS.md 等を指す）が残っていたら外す
+  # 旧構成のリンク（リポジトリの opencode/AGENTS.md 等を指す）が残っていたら外す
   [ -L "$dest" ] && { rm "$dest" || { rm -f "$tmp"; return 1; } }
   mv "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
   chmod 644 "$dest" 2>/dev/null
@@ -79,13 +78,11 @@ link_file "$SCRIPT_DIR/claude.md" "$HOME/.claude/rules/claude.md" || failed="$fa
 
 # グローバル指示を 1 ファイルしか読まない CLI: 連結生成
 generate_file "OpenCode" "$SCRIPT_DIR/opencode.md" "$HOME/.config/opencode/AGENTS.md" || failed="$failed ~/.config/opencode/AGENTS.md"
-generate_file "Grok" "$SCRIPT_DIR/grok.md" "$HOME/.grok/AGENTS.md" || failed="$failed ~/.grok/AGENTS.md"
 generate_file "Codex" "$SCRIPT_DIR/codex.md" "$HOME/.codex/AGENTS.md" || failed="$failed ~/.codex/AGENTS.md"
-generate_file "Devin" "$SCRIPT_DIR/devin.md" "$HOME/.config/devin/AGENTS.md" || failed="$failed ~/.config/devin/AGENTS.md"
 
 echo ""
 if [ -n "$failed" ]; then
   echo "警告: 以下の配布に失敗しました:$failed" >&2
   exit 1
 fi
-echo "配布が完了しました。OpenCode / Grok / Codex / Devin は連結生成なので、ai/*.md を編集したら再実行してください。"
+echo "配布が完了しました。OpenCode / Codex は連結生成なので、ai/*.md を編集したら再実行してください。"

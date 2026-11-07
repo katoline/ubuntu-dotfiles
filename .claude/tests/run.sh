@@ -1,8 +1,8 @@
 #!/bin/bash
 # .claude/ 配下の検証をまとめて実行する（sudo 不要）
 #   bash .claude/tests/run.sh
-# 内容: 設定 JSON（settings.json・opencode/・codex/・devin/）の構文、シェルスクリプトの構文、
-#       hooks/lib/*.awk の構文、SKILL.md / agents の frontmatter、
+# 内容: 設定 JSON（settings.json・opencode/・codex/）と Codex の TOML（config.toml・agents/*.toml）の構文、
+#       シェルスクリプトと hooks/lib/*.awk の構文、SKILL.md / agents の frontmatter、
 #       settings.json のフック・statusLine の登録元検査、
 #       フックと共通指示の配布、ホーム側の CLI 設定マージのテスト
 #       （pr-mode / guard-destructive / verify-gate / completion-gate / validate-claude-config / ai-install / codex-guard / codex-harness / grok-compat / git-pull / cli-config / opencode-permissions / opencode-harness。
@@ -20,10 +20,23 @@ status=0
 
 echo "== 構文チェック =="
 # 各CLIの設定 JSON（コメント不可の素の JSON だけを対象にする）
-for j in "$CLAUDE_DIR/settings.json" "$REPO_DIR"/opencode/*.json "$REPO_DIR/codex/hooks.json" "$REPO_DIR/devin/config.json"; do
+for j in "$CLAUDE_DIR/settings.json" "$REPO_DIR"/opencode/*.json "$REPO_DIR/codex/hooks.json"; do
   [ -f "$j" ] || continue
   if jq empty "$j" 2>/dev/null; then echo "  ✓ ${j#$REPO_DIR/}"; else echo "  ✗ ${j#$REPO_DIR/}: JSON が不正"; status=1; fi
 done
+# Codex の TOML（tomllib は Python 3.11 以降の標準。使えない環境では失敗にせずスキップする）
+if python3 -c 'import tomllib' >/dev/null 2>&1; then
+  for tf in "$REPO_DIR/codex/config.toml" "$REPO_DIR"/codex/agents/*.toml; do
+    [ -f "$tf" ] || continue
+    if python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$tf" 2>/dev/null; then
+      echo "  ✓ ${tf#$REPO_DIR/}"
+    else
+      echo "  ✗ ${tf#$REPO_DIR/}: TOML が不正"; status=1
+    fi
+  done
+else
+  echo "  - Codex の TOML 構文チェックをスキップ（python3 の tomllib が使えない）"
+fi
 for f in "$HOOKS_DIR"/*.sh "$HOOKS_DIR"/lib/*.sh "$CLAUDE_DIR/setup.sh" "$CLAUDE_DIR"/skills/*/scripts/*.sh "$TESTS_DIR"/*.sh \
   "$REPO_DIR/bootstrap.sh" "$REPO_DIR"/ai/*.sh "$REPO_DIR"/codex/hooks/*.sh "$REPO_DIR/opencode/hooks/*.sh" "$REPO_DIR/opencode/setup.sh" "$HOOKS_DIR"/lib/*.awk; do
   [ -f "$f" ] || continue

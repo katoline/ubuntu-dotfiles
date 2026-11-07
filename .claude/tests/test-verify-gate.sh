@@ -11,7 +11,7 @@ cleanup() { rm -rf "$W"; }
 trap cleanup EXIT
 cleanup
 mkdir -p "$W/repo/.claude/hooks/lib" "$W/repo/.claude/tests" "$W/repo/.claude/skills/x/sub" "$W/repo/.claude/agents/sub" \
-  "$W/repo/nix" "$W/repo/docs" "$W/repo/ai" "$W/repo/codex/hooks" "$W/repo/codex/prompts" "$W/repo/devin" "$W/repo/opencode" \
+  "$W/repo/nix" "$W/repo/docs" "$W/repo/ai" "$W/repo/codex/hooks" "$W/repo/codex/prompts" "$W/repo/codex/agents" "$W/repo/archive/devin" "$W/repo/archive/grok" "$W/repo/opencode" \
   "$W/outside" "$W/home/.claude" "$W/tmp"
 cp "$HOOK" "$W/repo/.claude/hooks/verify-gate.sh"
 H="$W/repo/.claude/hooks/verify-gate.sh"
@@ -21,7 +21,7 @@ for f in .claude/hooks/x.sh .claude/hooks/lib/strip-shell.awk .claude/tests/test
   .claude/setup.sh .claude/skills/x/SKILL.md .claude/skills/x/ref.md .claude/skills/x/sub/SKILL.md .claude/skills/x/tool.sh \
   .claude/agents/a.md .claude/agents/sub/b.md .claude/README.md bootstrap.sh flake.nix flake.lock nix/home.nix nix/merge-cli-config.py nix/README.md README.md AGENTS.md docs/x.md \
   ai/core.md ai/claude.md ai/install.sh ai/README.md codex/config.toml codex/hooks/guard.sh codex/prompts/pr.md \
-  devin/config.json opencode/opencode.json opencode/setup.sh opencode/README.md; do
+  codex/agents/reviewer.toml archive/devin/config.json archive/grok/config.toml archive/README.md opencode/opencode.json opencode/setup.sh opencode/README.md; do
   : > "$W/repo/$f"
 done
 : > "$W/outside/foo.sh"
@@ -216,10 +216,13 @@ run.sh $W/repo/ai/install.sh
 run.sh $W/repo/codex/config.toml
 run.sh $W/repo/codex/hooks/guard.sh
 run.sh $W/repo/codex/prompts/pr.md
-run.sh $W/repo/devin/config.json
+run.sh $W/repo/codex/agents/reviewer.toml
 run.sh $W/repo/opencode/opencode.json
 run.sh $W/repo/opencode/setup.sh
 none $W/repo/ai/README.md
+none $W/repo/archive/devin/config.json
+none $W/repo/archive/grok/config.toml
+none $W/repo/archive/README.md
 none $W/repo/opencode/README.md
 none $W/repo/README.md
 none $W/repo/nix/README.md

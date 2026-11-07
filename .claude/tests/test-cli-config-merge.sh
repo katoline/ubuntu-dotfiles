@@ -1,5 +1,5 @@
 #!/bin/bash
-# Codex / Devin の宣言設定マージを一時 HOME で検証する（実際のホームは触らない）。
+# Codex の宣言設定マージを一時 HOME で検証する（実際のホームは触らない）。
 # python3 に tomlkit が無ければ flake の共通 Python を取得する。CLI_CONFIG_PYTHON で指定もできる。
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -51,15 +51,12 @@ class MergeTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.repo = Path(self.temporary.name) / "repo"
         self.home = Path(self.temporary.name) / "home"
-        for directory in [self.repo / "codex", self.repo / "devin", self.home / ".codex",
-                          self.home / ".config/devin"]:
+        for directory in [self.repo / "codex", self.home / ".codex"]:
             directory.mkdir(parents=True)
         (self.repo / "codex/config.toml").write_text('model = "declared"\n[mcp_servers.node_repl]\nenabled = true\n')
         (self.repo / "codex/hooks.json").write_text((root / "codex/hooks.json").read_text())
-        (self.repo / "devin/config.json").write_text('{"permissions":{"deny":["Exec(sudo)"]},"theme_mode":"dark"}')
         self.config = self.home / ".codex/config.toml"
         self.hooks = self.home / ".codex/hooks.json"
-        self.devin = self.home / ".config/devin/config.json"
 
     def generate(self, detach_only=False):
         module.generate(self.repo, self.home, detach_only)
@@ -71,9 +68,9 @@ class MergeTests(unittest.TestCase):
         self.assertNotIn("node_repl", config.get("mcp_servers", {}))
         self.assertFalse(self.config.is_symlink())
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
-        times = [path.stat().st_mtime_ns for path in (self.config, self.hooks, self.devin)]
+        times = [path.stat().st_mtime_ns for path in (self.config, self.hooks)]
         self.generate()
-        self.assertEqual(times, [path.stat().st_mtime_ns for path in (self.config, self.hooks, self.devin)])
+        self.assertEqual(times, [path.stat().st_mtime_ns for path in (self.config, self.hooks)])
 
     def test_local_state_and_runtime_survive(self):
         self.config.write_text('''# ユーザーのコメント
@@ -91,7 +88,7 @@ enabled = false
 [mcp_servers.node_repl.env]
 CODEX_HOME = "/fixture/home/.codex"
 ''')
-        self.devin.write_text('{"devin":{"org_id":"org-fixture"},"shell":{"setup_complete":true},"permissions":{"deny":["old"],"local_rule":true}}')
+        self.hooks.write_text('{"local_state":{"setup_complete":true},"hooks":{}}')
         self.generate()
         config = tomlkit.parse(self.config.read_text())
         self.assertEqual(config["model"], "declared")
@@ -102,11 +99,10 @@ CODEX_HOME = "/fixture/home/.codex"
         self.assertEqual(config["mcp_servers"]["node_repl"]["env"]["CODEX_HOME"], "/fixture/home/.codex")
         self.assertTrue(config["mcp_servers"]["node_repl"]["enabled"])
         self.assertIn("ユーザーのコメント", self.config.read_text())
-        devin = json.loads(self.devin.read_text())
-        self.assertEqual(devin["devin"]["org_id"], "org-fixture")
-        self.assertTrue(devin["shell"]["setup_complete"])
-        self.assertEqual(devin["permissions"]["deny"], ["Exec(sudo)"])
-        self.assertTrue(devin["permissions"]["local_rule"])
+        # hooks.json もフック以外のローカル状態を残し、宣言したフックは反映する。
+        hooks = json.loads(self.hooks.read_text())
+        self.assertTrue(hooks["local_state"]["setup_complete"])
+        self.assertTrue(hooks["hooks"])
         # 外部ツールが switch 間に追加した値も次回そのまま引き継ぐ。
         config["hooks"]["state"]["second"] = {"trusted_hash": "new-local-hash"}
         self.config.write_text(tomlkit.dumps(config))
@@ -116,20 +112,20 @@ CODEX_HOME = "/fixture/home/.codex"
     def test_legacy_symlink_migration_never_writes_repo(self):
         old = Path(self.temporary.name) / "old"
         old.mkdir()
-        originals = ["model = 'old'\n[projects.fixture]\ntrust_level = 'trusted'\n", '{"hooks":{}}', '{"devin":{"org_id":"org-old"}}']
-        for destination, text in zip((self.config, self.hooks, self.devin), originals):
+        originals = ["model = 'old'\n[projects.fixture]\ntrust_level = 'trusted'\n", '{"local_state":"old","hooks":{}}']
+        for destination, text in zip((self.config, self.hooks), originals):
             source = old / destination.name
             source.write_text(text)
             destination.symlink_to(source)
         self.generate(detach_only=True)
-        for destination, text in zip((self.config, self.hooks, self.devin), originals):
+        for destination, text in zip((self.config, self.hooks), originals):
             self.assertFalse(destination.is_symlink())
             self.assertEqual(destination.read_text(), text)
         # home-manager の旧リンク削除は実ファイルになった対象を削除しない。
         self.generate()
         self.assertEqual(tomlkit.parse(self.config.read_text())["projects"]["fixture"]["trust_level"], "trusted")
-        self.assertEqual(json.loads(self.devin.read_text())["devin"]["org_id"], "org-old")
-        for source, text in zip((old / "config.toml", old / "hooks.json", old / "config.json"), originals):
+        self.assertEqual(json.loads(self.hooks.read_text())["local_state"], "old")
+        for source, text in zip((old / "config.toml", old / "hooks.json"), originals):
             self.assertEqual(source.read_text(), text)
 
     def test_direct_merge_detaches_symlink(self):
@@ -166,12 +162,23 @@ CODEX_HOME = "/fixture/home/.codex"
         self.assertFalse(self.hooks.exists())
 
     def test_invalid_last_config_fails_before_any_write(self):
-        self.devin.write_text("{")
+        self.hooks.write_text("{")
         with self.assertRaises(ValueError):
             self.generate()
         self.assertFalse(self.config.exists())
-        self.assertFalse(self.hooks.exists())
-        self.assertEqual(self.devin.read_text(), "{")
+        self.assertEqual(self.hooks.read_text(), "{")
+
+    def test_paused_devin_config_untouched(self):
+        # Devin は休止中で反映対象外。既存のホーム側設定は書き換えず、無ければ作らない。
+        devin = self.home / ".config/devin/config.json"
+        self.generate()
+        self.assertFalse(devin.exists())
+        devin.parent.mkdir(parents=True)
+        devin.write_text("{")
+        before = devin.stat().st_mtime_ns
+        self.generate()
+        self.assertEqual(devin.read_text(), "{")
+        self.assertEqual(devin.stat().st_mtime_ns, before)
 
     def test_invalid_hooks_structure_fails_before_any_write(self):
         self.hooks.write_text('{"hooks":{"PreToolUse":false}}')

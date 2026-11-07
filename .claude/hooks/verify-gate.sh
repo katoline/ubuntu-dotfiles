@@ -19,7 +19,7 @@
 #   マーカーを消す（block の後に編集し直したら、もう一度だけ止める）
 #     run.sh   … .claude/hooks/**・.claude/tests/**・.claude/settings.json・.claude/setup.sh・bootstrap.sh・
 #                .claude/skills/** のうち .md 以外と .claude/skills/<名前>/SKILL.md・.claude/agents/<名前>.md・
-#                ai/**・codex/**・devin/**・opencode/*.json・opencode/setup.sh
+#                ai/**・codex/**・opencode/*.json・opencode/setup.sh（archive/** は休止中の設定なので対象外）
 #                （run.sh が検査するものだけ。skills 配下の参考資料の .md や agents のサブディレクトリは対象外）
 #     nix eval … flake.nix・flake.lock・nix/**/*.nix
 #     両方     … .claude/dev-roots・nix/merge-cli-config.py（run.sh が検査するうえ、nix/home.nix も読み込む）
@@ -103,7 +103,7 @@ classify() {
     .claude/dev-roots | nix/merge-cli-config.py) printf 'run.sh\t%s\nnix eval\t%s\n' "$top" "$top" ;;
     .claude/hooks/* | .claude/tests/* | .claude/settings.json | .claude/setup.sh | bootstrap.sh) printf 'run.sh\t%s\n' "$top" ;;
     ai/README.md) ;;
-    ai/* | codex/* | devin/* | opencode/setup.sh | opencode/*.json | opencode/plugins/* | opencode/hooks/*) printf 'run.sh\t%s\n' "$top" ;;
+    ai/* | codex/* | opencode/setup.sh | opencode/*.json | opencode/plugins/* | opencode/hooks/*) printf 'run.sh\t%s\n' "$top" ;;
     .claude/skills/*)
       case "$rel" in
         *.md) [[ "${rel#.claude/skills/}" =~ ^[^/]+/SKILL\.md$ ]] && printf 'run.sh\t%s\n' "$top" ;;
