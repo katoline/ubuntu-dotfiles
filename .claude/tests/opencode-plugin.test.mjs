@@ -265,8 +265,9 @@ try {
   }
   await callPermission(h, fallbackInstall)
   check("fallback-install-stays-ask", () => assert.equal(fallbackInstall.effect, "ask"))
+  sessions.fallbackfeat = rootInfo("fallbackfeat", { location: { directory: REPO_FEAT } })
   const fallbackGit = {
-    sessionID: "feat",
+    sessionID: "fallbackfeat",
     agent: "build",
     action: "shell",
     resources: ["git commit -m x"],
