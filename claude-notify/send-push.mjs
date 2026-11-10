@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import webpush from "web-push";
+import * as webpush from "web-push";
 
 const SETUP_HINT =
   "セットアップ手順は dotfiles の .claude/README.md、および claude-notify-mobile リポジトリの docs/SETUP.md を参照してください（VAPID 鍵の生成・購読情報の登録が必要です）。";
