@@ -8,15 +8,29 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
-const webpushUrl = pathToFileURL(
-  createRequire(import.meta.url).resolve("web-push")
-).href;
+/**
+ * web-push 4 は ESM の名前付き export だけで書き換えられないため、
+ * 読み込みフックで "web-push" を送信しない代替モジュールへ差し替える。
+ */
+function mockWebpush(sendNotification) {
+  const stub = `export const setVapidDetails = () => {};
+    export const sendNotification = ${sendNotification};`;
+  return `
+    import { registerHooks } from "node:module";
+    const url = ${JSON.stringify(`data:text/javascript,${encodeURIComponent(stub)}`)};
+    registerHooks({
+      resolve(specifier, context, nextResolve) {
+        if (specifier === "web-push") return { url, shortCircuit: true };
+        return nextResolve(specifier, context);
+      },
+    });
+  `;
+}
 
 /** 作成済みの記述子を使い、子プロセスが書いたログを先頭から読む。 */
 function readLog(log) {
@@ -88,15 +102,11 @@ for (const [name, errorFields, expected] of [
   ["不正なHTTPステータス", { statusCode: "DUMMY_SECRET_STATUS" }, /送信に失敗/],
 ]) {
   test(`${name}の本文や送信先をログへ含めない`, () => {
-    const preload = `
-      import webpush from ${JSON.stringify(webpushUrl)};
-      webpush.setVapidDetails = () => {};
-      webpush.sendNotification = () => Promise.reject(Object.assign(
+    const preload = mockWebpush(`() => Promise.reject(Object.assign(
         new Error("DUMMY_SECRET_ERROR_MESSAGE"),
         ${JSON.stringify(errorFields)},
         {body: "DUMMY_SECRET_RESPONSE", endpoint: "https://example.invalid/DUMMY_SECRET_ENDPOINT"}
-      ));
-    `;
+      ))`);
     const stderr = runWithDummyConfig(dummyConfig, preload);
     assert.match(stderr, expected);
     assert.doesNotMatch(stderr, /DUMMY|SECRET|https:\/\//);
@@ -121,11 +131,8 @@ for (const [name, preload, scriptArgs, expected] of [
   ],
   [
     "状態ファイル保存",
-    `
+    `${mockWebpush("() => Promise.resolve({statusCode: 201})")}
       import fs from "node:fs";
-      import webpush from ${JSON.stringify(webpushUrl)};
-      webpush.setVapidDetails = () => {};
-      webpush.sendNotification = () => Promise.resolve({statusCode: 201});
       const original = fs.writeFileSync;
       fs.writeFileSync = (filename, ...args) => {
         if (filename.endsWith(".claude-notify-state.json")) {
